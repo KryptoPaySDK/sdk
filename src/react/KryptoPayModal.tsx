@@ -5,13 +5,13 @@ import { CheckoutController } from "../ui/controller";
 import { ensureStylesInjected } from "../ui/styles";
 import { applyThemeToElement } from "../ui/theme";
 
-export type KryptoPayModalProps = Omit<
-  KryptoPayCheckoutOptions,
-  "clientSecret"
-> & {
+
+
+export type KryptoPayModalProps = Omit<KryptoPayCheckoutOptions, "clientSecret"> & {
   open: boolean;
   clientSecret: string;
   baseUrl?: string;
+  fetchImpl?: typeof fetch;
 };
 
 /**
@@ -27,6 +27,25 @@ export type KryptoPayModalProps = Omit<
 export function KryptoPayModal(props: KryptoPayModalProps) {
   const [state, setState] = useState<CheckoutState>({ type: "idle" });
 
+  const onCloseRef = React.useRef(props.onClose);
+  const onSuccessRef = React.useRef(props.onSuccess);
+  const onAwaitingRef = React.useRef(props.onAwaitingConfirmation);
+  const onErrorRef = React.useRef(props.onError);
+
+  useEffect(() => {
+    onCloseRef.current = props.onClose;
+  }, [props.onClose]);
+  useEffect(() => {
+    onSuccessRef.current = props.onSuccess;
+  }, [props.onSuccess]);
+  useEffect(() => {
+    onAwaitingRef.current = props.onAwaitingConfirmation;
+  }, [props.onAwaitingConfirmation]);
+  useEffect(() => {
+    onErrorRef.current = props.onError;
+  }, [props.onError]);
+
+
   // Ensure styles exist for the modal UI
   useEffect(() => {
     ensureStylesInjected();
@@ -35,12 +54,30 @@ export function KryptoPayModal(props: KryptoPayModalProps) {
   // Create controller once per clientSecret (new payment, new controller).
   const controller = useMemo(() => {
     return new CheckoutController({
-      ...props,
       clientSecret: props.clientSecret,
       baseUrl: props.baseUrl,
+      fetchImpl: props.fetchImpl,
+
+      defaultMethod: props.defaultMethod,
+      allowManual: props.allowManual,
+      allowWallet: props.allowWallet,
+
+      // IMPORTANT: stable wrappers call latest refs
+      onClose: () => onCloseRef.current?.(),
+      onSuccess: (e) => onSuccessRef.current?.(e),
+      onAwaitingConfirmation: (e) => onAwaitingRef.current?.(e),
+      onError: (e) => onErrorRef.current?.(e),
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.clientSecret]);
+    // Controller identity should only change when the payment changes.
+  }, [
+    props.clientSecret,
+    props.baseUrl,
+    props.fetchImpl,
+    props.defaultMethod,
+    props.allowManual,
+    props.allowWallet,
+  ]);
+
 
   // Subscribe to controller state updates
   useEffect(() => {

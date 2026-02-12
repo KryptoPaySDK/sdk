@@ -70,6 +70,7 @@ export type ControllerConfig = Pick<
   | "onError"
 > & {
   baseUrl?: string; // allow overriding API URL from UI wrappers
+  fetchImpl?: typeof fetch;
 };
 
 /**

@@ -95,6 +95,7 @@ export class CheckoutController {
     try {
       const intent = await resolveIntent(this.config.clientSecret, {
         baseUrl: this.config.baseUrl,
+        fetchImpl: this.config.fetchImpl,
       });
 
       // Decide initial tab
@@ -230,6 +231,7 @@ export class CheckoutController {
     try {
       const result = await waitForFinalStatus(this.config.clientSecret, {
         baseUrl: this.config.baseUrl,
+        fetchImpl: this.config.fetchImpl,
         intervalMs: this.pollIntervalMs,
         timeoutMs: this.pollTimeoutMs,
         onUpdate: (intent) => {
