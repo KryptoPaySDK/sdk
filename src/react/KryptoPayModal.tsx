@@ -1,57 +1,65 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { KryptoPayCheckoutOptions } from "../core/types";
-import type { CheckoutState, PaymentMethod } from "../ui/state";
+import type { CheckoutState } from "../ui/state";
 import { CheckoutController } from "../ui/controller";
 import { ensureStylesInjected } from "../ui/styles";
 import { applyThemeToElement } from "../ui/theme";
 
-
-
-export type KryptoPayModalProps = Omit<KryptoPayCheckoutOptions, "clientSecret"> & {
+export type KryptoPayModalProps = Omit<
+  KryptoPayCheckoutOptions,
+  "clientSecret"
+> & {
   open: boolean;
   clientSecret: string;
   baseUrl?: string;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: typeof fetch; // enables Cosmos/tests without backend
 };
 
 /**
- * React wrapper:
- * - creates controller
- * - subscribes to state
- * - renders based on state
+ * React renderer for the KryptoPay checkout modal.
  *
- * Important design choice:
- * we do not put business logic in React.
- * business logic stays inside CheckoutController.
+ * The UI stays dumb: it renders based on controller state.
+ * All business logic lives in CheckoutController.
  */
 export function KryptoPayModal(props: KryptoPayModalProps) {
   const [state, setState] = useState<CheckoutState>({ type: "idle" });
 
-  const onCloseRef = React.useRef(props.onClose);
-  const onSuccessRef = React.useRef(props.onSuccess);
-  const onAwaitingRef = React.useRef(props.onAwaitingConfirmation);
-  const onErrorRef = React.useRef(props.onError);
-
-  useEffect(() => {
-    onCloseRef.current = props.onClose;
-  }, [props.onClose]);
-  useEffect(() => {
-    onSuccessRef.current = props.onSuccess;
-  }, [props.onSuccess]);
-  useEffect(() => {
-    onAwaitingRef.current = props.onAwaitingConfirmation;
-  }, [props.onAwaitingConfirmation]);
-  useEffect(() => {
-    onErrorRef.current = props.onError;
-  }, [props.onError]);
-
-
-  // Ensure styles exist for the modal UI
+  // Inject minimal styles once.
   useEffect(() => {
     ensureStylesInjected();
   }, []);
 
-  // Create controller once per clientSecret (new payment, new controller).
+  /**
+   * Callback refs:
+   * The controller is created once per "session" (clientSecret),
+   * so callbacks passed at creation time would become stale on re-render.
+   * We store them in refs and pass stable wrapper functions to controller.
+   */
+  const onCloseRef = useRef(props.onClose);
+  const onSuccessRef = useRef(props.onSuccess);
+  const onAwaitingRef = useRef(props.onAwaitingConfirmation);
+  const onErrorRef = useRef(props.onError);
+
+  useEffect(() => {
+    onCloseRef.current = props.onClose;
+  }, [props.onClose]);
+
+  useEffect(() => {
+    onSuccessRef.current = props.onSuccess;
+  }, [props.onSuccess]);
+
+  useEffect(() => {
+    onAwaitingRef.current = props.onAwaitingConfirmation;
+  }, [props.onAwaitingConfirmation]);
+
+  useEffect(() => {
+    onErrorRef.current = props.onError;
+  }, [props.onError]);
+
+  /**
+   * Create controller once per checkout session.
+   * Recreate only when values that affect business logic change.
+   */
   const controller = useMemo(() => {
     return new CheckoutController({
       clientSecret: props.clientSecret,
@@ -62,13 +70,13 @@ export function KryptoPayModal(props: KryptoPayModalProps) {
       allowManual: props.allowManual,
       allowWallet: props.allowWallet,
 
-      // IMPORTANT: stable wrappers call latest refs
+      // stable wrappers -> always call latest callbacks from refs
       onClose: () => onCloseRef.current?.(),
       onSuccess: (e) => onSuccessRef.current?.(e),
       onAwaitingConfirmation: (e) => onAwaitingRef.current?.(e),
       onError: (e) => onErrorRef.current?.(e),
     });
-    // Controller identity should only change when the payment changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     props.clientSecret,
     props.baseUrl,
@@ -78,46 +86,49 @@ export function KryptoPayModal(props: KryptoPayModalProps) {
     props.allowWallet,
   ]);
 
+  // Subscribe once to controller state updates.
+  useEffect(() => controller.subscribe(setState), [controller]);
 
-  // Subscribe to controller state updates
-  useEffect(() => {
-    return controller.subscribe(setState);
-  }, [controller]);
-
-  // Open and close behavior driven by `open` prop
+  // Open/close driven by prop.
   useEffect(() => {
     if (props.open) {
       void controller.open();
     } else {
-      // When parent closes, we close controller too
       controller.close();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.open, controller]);
 
-  // If not open, render nothing
   if (!props.open) return null;
 
   return (
     <Overlay
-      {...props}
-      onBackdropClick={() => controller.close()}
       state={state}
       controller={controller}
+      labels={props.labels}
+      classNames={props.classNames}
+      merchantName={props.merchantName}
+      theme={props.theme}
+      overlayOpacity={props.overlayOpacity}
+      zIndex={props.zIndex}
+      size={props.size}
+      onBackdropClick={() => controller.close()}
     />
   );
 }
 
-function Overlay(
-  props: {
-    state: CheckoutState;
-    controller: CheckoutController;
-    onBackdropClick: () => void;
-  } & KryptoPayModalProps,
-) {
-  // Apply theme variables directly on overlay root.
-  // This keeps styling consistent between React and vanilla.
-  const overlayRef = React.useRef<HTMLDivElement | null>(null);
+function Overlay(props: {
+  state: CheckoutState;
+  controller: CheckoutController;
+  merchantName?: string;
+  labels?: KryptoPayCheckoutOptions["labels"];
+  classNames?: KryptoPayCheckoutOptions["classNames"];
+  theme?: KryptoPayCheckoutOptions["theme"];
+  overlayOpacity?: number;
+  zIndex?: number;
+  size?: KryptoPayCheckoutOptions["size"];
+  onBackdropClick: () => void;
+}) {
+  const overlayRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!overlayRef.current) return;
@@ -129,30 +140,29 @@ function Overlay(
     });
   }, [props.theme, props.overlayOpacity, props.zIndex, props.size]);
 
-  const classNames = props.classNames ?? {};
+  const cn = props.classNames ?? {};
 
   return (
     <div
       ref={overlayRef}
-      className={`kp-overlay ${classNames.overlay ?? ""}`}
+      className={`kp-overlay ${cn.overlay ?? ""}`}
       onMouseDown={(e) => {
-        // Close if user clicks backdrop, not the modal itself
         if (e.target === e.currentTarget) props.onBackdropClick();
       }}
     >
-      <div className={`kp-modal ${classNames.modal ?? ""}`}>
-        <div className={`kp-header ${classNames.header ?? ""}`}>
+      <div className={`kp-modal ${cn.modal ?? ""}`}>
+        <div className={`kp-header ${cn.header ?? ""}`}>
           <div>
             <div className="kp-title">{props.labels?.title ?? "Checkout"}</div>
             {props.merchantName ? (
-              <div className={`kp-muted ${classNames.helperText ?? ""}`}>
+              <div className={`kp-muted ${cn.helperText ?? ""}`}>
                 {props.merchantName}
               </div>
             ) : null}
           </div>
 
           <button
-            className={`kp-btn ${classNames.secondaryButton ?? ""}`}
+            className={`kp-btn ${cn.secondaryButton ?? ""}`}
             onClick={() => props.controller.close()}
             type="button"
           >
@@ -160,21 +170,21 @@ function Overlay(
           </button>
         </div>
 
-        <div className={`kp-body ${classNames.body ?? ""}`}>
+        <div className={`kp-body ${cn.body ?? ""}`}>
           <RenderBody
             state={props.state}
             controller={props.controller}
             labels={props.labels}
-            classNames={classNames}
+            classNames={cn}
           />
         </div>
 
-        <div className={`kp-footer ${classNames.footer ?? ""}`}>
+        <div className={`kp-footer ${cn.footer ?? ""}`}>
           <RenderFooter
             state={props.state}
             controller={props.controller}
             labels={props.labels}
-            classNames={classNames}
+            classNames={cn}
           />
         </div>
       </div>
@@ -206,6 +216,7 @@ function RenderBody(props: {
             {s.intent.token_symbol}
           </div>
         </div>
+
         <div className="kp-row">
           <div>Chain</div>
           <div>{s.intent.chain}</div>
@@ -227,13 +238,69 @@ function RenderBody(props: {
         </div>
 
         <p className="kp-muted">
-          Choose how you want to pay. If wallet connection fails, you can pay
-          manually.
+          You can pay with a connected wallet or manually send the funds. If
+          wallet payment fails, manual payment is available.
         </p>
       </>
     );
   }
 
+  // WALLET STATES
+  if (s.type === "wallet_connecting") {
+    return (
+      <>
+        <p className="kp-muted">Connecting to your wallet…</p>
+        <p className="kp-muted" style={{ marginTop: 8 }}>
+          Approve the connection request in your wallet.
+        </p>
+      </>
+    );
+  }
+
+  if (s.type === "wallet_switching_chain") {
+    return (
+      <>
+        <p className="kp-muted">Switching network…</p>
+        <p className="kp-muted" style={{ marginTop: 8 }}>
+          Approve the network switch request in your wallet.
+        </p>
+      </>
+    );
+  }
+
+  if (s.type === "wallet_sending") {
+    return (
+      <>
+        <p className="kp-muted">Confirm the payment in your wallet…</p>
+        <div className="kp-row" style={{ marginTop: 10 }}>
+          <div>From</div>
+          <div>{shortAddr(s.from)}</div>
+        </div>
+      </>
+    );
+  }
+
+  if (s.type === "wallet_submitted") {
+    return (
+      <>
+        <p className="kp-muted">Transaction submitted.</p>
+        <div className="kp-row" style={{ marginTop: 10 }}>
+          <div>Tx Hash</div>
+          <div
+            className="kp-muted"
+            style={{ overflow: "hidden", textOverflow: "ellipsis" }}
+          >
+            {s.txHash}
+          </div>
+        </div>
+        <p className="kp-muted" style={{ marginTop: 8 }}>
+          Waiting for confirmations…
+        </p>
+      </>
+    );
+  }
+
+  // MANUAL FLOW
   if (s.type === "manual_instructions") {
     return (
       <>
@@ -262,8 +329,7 @@ function RenderBody(props: {
         </div>
 
         <p className="kp-muted" style={{ marginTop: 12 }}>
-          After you send payment, we will update automatically once it is
-          detected.
+          We’ll update automatically once payment is detected.
         </p>
       </>
     );
@@ -347,39 +413,6 @@ function RenderBody(props: {
     );
   }
 
-  if (s.type === "wallet_connecting") {
-    return <p className="kp-muted">Connecting wallet…</p>;
-  }
-
-  if (s.type === "wallet_switching_chain") {
-    return <p className="kp-muted">Switching network…</p>;
-  }
-
-  if (s.type === "wallet_sending") {
-    return <p className="kp-muted">Confirm the payment in your wallet…</p>;
-  }
-
-  if (s.type === "wallet_submitted") {
-    return (
-      <>
-        <p className="kp-muted">Transaction submitted.</p>
-        <div className="kp-row">
-          <div>Tx Hash</div>
-          <div
-            className="kp-muted"
-            style={{ overflow: "hidden", textOverflow: "ellipsis" }}
-          >
-            {s.txHash}
-          </div>
-        </div>
-        <p className="kp-muted" style={{ marginTop: 8 }}>
-          Waiting for confirmation…
-        </p>
-      </>
-    );
-  }
-
-
   return null;
 }
 
@@ -391,7 +424,6 @@ function RenderFooter(props: {
 }) {
   const s = props.state;
 
-  // Footer buttons depend on state
   if (s.type === "choose_method") {
     return (
       <button
@@ -425,6 +457,19 @@ function RenderFooter(props: {
     );
   }
 
+  if (
+    s.type === "wallet_connecting" ||
+    s.type === "wallet_switching_chain" ||
+    s.type === "wallet_sending" ||
+    s.type === "wallet_submitted" ||
+    s.type === "manual_instructions" ||
+    s.type === "waiting"
+  ) {
+    // MVP: do not show footer buttons while in-progress.
+    // User can always close via header.
+    return null;
+  }
+
   if (s.type === "success" || s.type === "expired" || s.type === "error") {
     return (
       <button
@@ -437,7 +482,6 @@ function RenderFooter(props: {
     );
   }
 
-  // Manual instructions and waiting states usually need no footer buttons in MVP
   return null;
 }
 
@@ -459,14 +503,16 @@ function Tab(props: {
   );
 }
 
-/**
- * Converts integer base units into a human string.
- * For MVP we keep it simple.
- * Later we can add better formatting and locale support.
- */
 function formatAmount(amountUnits: number, decimals: number) {
+  if (decimals === 0) return String(amountUnits);
   const s = String(amountUnits).padStart(decimals + 1, "0");
   const whole = s.slice(0, -decimals);
   const frac = s.slice(-decimals).replace(/0+$/, "");
   return frac ? `${whole}.${frac}` : whole;
+}
+
+function shortAddr(addr: string) {
+  if (!addr) return "";
+  if (addr.length <= 12) return addr;
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
