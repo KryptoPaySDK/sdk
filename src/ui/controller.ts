@@ -4,23 +4,27 @@ import type { ResolvedPaymentIntent } from "../core/types";
 import type { ControllerConfig, CheckoutState, PaymentMethod } from "./state";
 import { toPublicError } from "./state";
 
+// Wallet helpers (EOA / injected provider only)
+import {
+  getInjectedProvider,
+  requestAccounts,
+  getChainId,
+  switchEthereumChain,
+} from "../wallet/injected";
+import { sendErc20Transfer } from "../wallet/sendUsdc";
+
 /**
  * CheckoutController
  *
- * This is the heart of the SDK UI logic.
- * It is NOT tied to React or the DOM.
+ * Framework-agnostic state machine that powers:
+ * - React modal renderer
+ * - Vanilla modal renderer
  *
- * React wrapper will:
- * - create a controller
- * - subscribe to state updates
- * - render based on state
- *
- * Vanilla wrapper will:
- * - create a controller
- * - subscribe to state updates
- * - render to DOM based on state
- *
- * The point is: one state machine, two renderers.
+ * It controls:
+ * - resolving intents
+ * - wallet/manual flows
+ * - polling + status transitions
+ * - awaiting-confirmation UX
  */
 export class CheckoutController {
   private config: ControllerConfig;
@@ -32,10 +36,13 @@ export class CheckoutController {
   private isRunning = false;
   private stopRequested = false;
 
-  // Used to implement the "awaiting confirmation" UX rule.
+  // "Awaiting confirmation" UX
   private awaitingThresholdMs = 60_000; // 60 seconds
   private pollIntervalMs = 2_500;
   private pollTimeoutMs = 10 * 60_000; // 10 minutes total
+
+  // Wallet tracking (useful for callbacks/UI even before API stores tx_hash)
+  private lastTxHash: string | null = null;
 
   constructor(config: ControllerConfig) {
     this.config = {
@@ -52,19 +59,12 @@ export class CheckoutController {
 
   /**
    * Subscribe to state changes.
-   * Returns an unsubscribe function.
-   *
-   * Important:
-   * React useEffect cleanups must return void.
-   * Set.delete() returns boolean, so we wrap it in a block to avoid returning boolean.
+   * Returns an unsubscribe function (must return void for React useEffect cleanup).
    */
   subscribe(fn: (state: CheckoutState) => void) {
     this.listeners.add(fn);
-
-    // Emit immediately so the UI can render the current state right away.
     fn(this.state);
 
-    // Cleanup must return void, not boolean.
     return () => {
       this.listeners.delete(fn);
     };
@@ -74,19 +74,17 @@ export class CheckoutController {
     return this.state;
   }
 
-  /**
-   * Emits a new state to subscribers.
-   */
   private setState(next: CheckoutState) {
     this.state = next;
     for (const fn of this.listeners) fn(next);
   }
 
   /**
-   * Open the modal: resolves the intent, then transitions to choose_method.
+   * Resolves the intent from clientSecret and enters choose_method.
    */
   async open() {
     if (this.isRunning) return;
+
     this.isRunning = true;
     this.stopRequested = false;
 
@@ -98,13 +96,10 @@ export class CheckoutController {
         fetchImpl: this.config.fetchImpl,
       });
 
-      // Decide initial tab
-      const selected = this.getInitialMethod();
-
       this.setState({
         type: "choose_method",
         intent,
-        selected,
+        selected: this.getInitialMethod(),
       });
     } catch (err) {
       const pub = toPublicError(err);
@@ -114,24 +109,24 @@ export class CheckoutController {
   }
 
   /**
-   * Close requested by user.
-   * Stops background polling and notifies consumer.
+   * Close ends the modal session:
+   * - stops background polling
+   * - transitions back to idle
    */
   close() {
     this.stopRequested = true;
     this.isRunning = false;
+
     this.config.onClose?.();
     this.setState({ type: "idle" });
   }
 
   /**
-   * User explicitly selects a method tab (wallet/manual).
-   * (Wallet flow is stubbed for now; manual is implemented.)
+   * Switch tab between wallet/manual on the choose_method screen.
    */
   selectMethod(method: PaymentMethod) {
     if (this.state.type !== "choose_method") return;
 
-    // If the merchant disabled this method, ignore
     if (method === "wallet" && !this.config.allowWallet) return;
     if (method === "manual" && !this.config.allowManual) return;
 
@@ -142,49 +137,35 @@ export class CheckoutController {
   }
 
   /**
-   * Continue from choose_method into the selected method flow.
+   * Continue from choose_method into the selected flow.
    */
   async continue() {
     if (this.state.type !== "choose_method") return;
 
     const { intent, selected } = this.state;
 
+    // New attempt: clear previous wallet hash (if any)
+    this.lastTxHash = null;
+
     if (selected === "manual") {
-      // Manual instructions screen + start polling.
       this.setState({ type: "manual_instructions", intent });
       await this.startPolling(intent);
       return;
     }
 
-    // Wallet flow: stub now.
-    // We will implement:
-    // - connect wallet
-    // - switch chain
-    // - send USDC transfer
-    // - then start polling
-    //
-    // For now, we push users to manual to keep MVP functional.
-    this.setState({
-      type: "choose_method",
-      intent,
-      selected: "manual",
-      message:
-        "Wallet payments will be available soon. Please pay manually for now.",
-    });
-
-    // Optional: auto-enter manual
-    this.setState({ type: "manual_instructions", intent });
-    await this.startPolling(intent);
+    if (selected === "wallet") {
+      await this.startWalletFlow(intent);
+      return;
+    }
   }
 
   /**
-   * If user is in "awaiting confirmation", they can choose to keep waiting.
+   * If user is on awaiting_confirmation screen, they can choose to keep waiting.
    */
   async keepWaiting() {
     const current = this.state;
     if (current.type !== "awaiting_confirmation") return;
 
-    // Go back to waiting state but keep pendingConfirmationsSince
     this.setState({
       type: "waiting",
       intent: current.intent,
@@ -194,34 +175,103 @@ export class CheckoutController {
     await this.startPolling(current.intent);
   }
 
-  /**
-   * Figure out the initial payment method tab to show.
-   */
   private getInitialMethod(): PaymentMethod {
     const pref = this.config.defaultMethod ?? "wallet";
+
     if (pref === "wallet" && this.config.allowWallet) return "wallet";
     if (pref === "manual" && this.config.allowManual) return "manual";
 
-    // Fallback if preferred method is not allowed
     if (this.config.allowWallet) return "wallet";
     return "manual";
   }
 
   /**
-   * Polling loop:
-   * - calls resolve repeatedly
-   * - transitions based on intent.status
-   * - implements the "awaiting confirmation after 60s" UX rule
+   * Wallet flow (EOA / injected only, MVP):
+   * 1) connect wallet
+   * 2) ensure chain matches intent.chain_id
+   * 3) send ERC-20 transfer to expected_wallet
+   * 4) poll until succeeded/expired
    *
-   * NOTE: This uses waitForFinalStatus() from Task 2,
-   * but also adds intermediate state transitions on every update.
+   * MVP decision: if chain switch fails (including 4902), fall back to manual.
+   */
+  private async startWalletFlow(intent: ResolvedPaymentIntent) {
+    try {
+      const provider = getInjectedProvider();
+      if (!provider) {
+        throw new Error(
+          "No injected wallet found. Install MetaMask or use manual payment.",
+        );
+      }
+
+      this.setState({ type: "wallet_connecting", intent });
+
+      const accounts = await requestAccounts(provider);
+      const from = accounts?.[0];
+      if (!from) throw new Error("No wallet account available.");
+
+      const currentChainId = await getChainId(provider);
+
+      if (currentChainId !== intent.chain_id) {
+        this.setState({ type: "wallet_switching_chain", intent });
+
+        // Option 1: do not add chain; attempt switch only.
+        await switchEthereumChain(provider, intent.chain_id);
+
+        const afterSwitch = await getChainId(provider);
+        if (afterSwitch !== intent.chain_id) {
+          throw new Error("Wallet did not switch to the correct network.");
+        }
+      }
+
+      this.setState({ type: "wallet_sending", intent, from });
+
+      const txHash = await sendErc20Transfer({
+        provider,
+        from,
+        tokenAddress: intent.token_address,
+        to: intent.expected_wallet,
+        amountUnits: BigInt(intent.amount_units),
+      });
+
+      this.lastTxHash = txHash;
+
+      this.setState({ type: "wallet_submitted", intent, txHash });
+
+      // Wait for backend/watcher to detect and confirm.
+      await this.startPolling(intent);
+    } catch (err) {
+      const pub = toPublicError(err);
+
+      // Wallet failure should guide the user to manual if available.
+      if (this.config.allowManual) {
+        this.setState({
+          type: "choose_method",
+          intent,
+          selected: "manual",
+          message: pub.message,
+        });
+
+        this.setState({ type: "manual_instructions", intent });
+        await this.startPolling(intent);
+        return;
+      }
+
+      this.config.onError?.(pub);
+      this.setState({ type: "error", error: pub, lastIntent: intent });
+    }
+  }
+
+  /**
+   * Polling loop:
+   * - repeatedly resolves intent
+   * - updates UI based on intermediate statuses
+   * - enters awaiting_confirmation if pending_confirmations > threshold
    */
   private async startPolling(initialIntent: ResolvedPaymentIntent) {
     if (this.stopRequested) return;
 
     let pendingSince: number | undefined;
 
-    // Enter waiting state immediately
     this.setState({
       type: "waiting",
       intent: initialIntent,
@@ -237,14 +287,10 @@ export class CheckoutController {
         onUpdate: (intent) => {
           if (this.stopRequested) return;
 
-          // Track how long we've been in pending_confirmations
           if (intent.status === "pending_confirmations") {
             if (!pendingSince) pendingSince = Date.now();
 
             const elapsed = Date.now() - pendingSince;
-
-            // Once it crosses threshold, we show the awaiting confirmation screen.
-            // This matches your UX requirement: "You can safely close and confirm in dashboard later."
             if (elapsed >= this.awaitingThresholdMs) {
               this.config.onAwaitingConfirmation?.({
                 payment_intent_id: intent.id,
@@ -261,7 +307,6 @@ export class CheckoutController {
             return;
           }
 
-          // If it goes back to requires_payment, reset pending timer
           if (intent.status === "requires_payment") {
             pendingSince = undefined;
             this.setState({
@@ -272,7 +317,6 @@ export class CheckoutController {
             return;
           }
 
-          // For other statuses we let the final handler below manage it.
           this.setState({
             type: "waiting",
             intent,
@@ -286,13 +330,13 @@ export class CheckoutController {
       const finalIntent = result.intent;
 
       if (finalIntent.status === "succeeded") {
-        // Success is ONLY watcher-confirmed success
         this.config.onSuccess?.({
           payment_intent_id: finalIntent.id,
-          tx_hash: (finalIntent as any).tx_hash ?? "",
+          tx_hash: this.lastTxHash ?? "",
           chain: finalIntent.chain,
           mode: finalIntent.mode,
         });
+
         this.setState({ type: "success", intent: finalIntent });
         return;
       }
@@ -302,9 +346,6 @@ export class CheckoutController {
         return;
       }
 
-      // Timeout case (not a terminal status)
-      // We convert it into "awaiting confirmation" if we're pending_confirmations,
-      // otherwise keep waiting.
       if (result.timedOut) {
         if (finalIntent.status === "pending_confirmations") {
           this.config.onAwaitingConfirmation?.({
@@ -314,17 +355,15 @@ export class CheckoutController {
           return;
         }
 
-        // Still requires_payment or other non-final state.
-        // Leave the UI in waiting state; user can close or keep waiting.
         this.setState({
           type: "waiting",
           intent: finalIntent,
           pendingConfirmationsSince: pendingSince,
         });
-        return;
       }
     } catch (err) {
       if (this.stopRequested) return;
+
       const pub = toPublicError(err);
       this.config.onError?.(pub);
 

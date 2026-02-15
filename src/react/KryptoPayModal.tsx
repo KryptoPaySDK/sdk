@@ -347,6 +347,39 @@ function RenderBody(props: {
     );
   }
 
+  if (s.type === "wallet_connecting") {
+    return <p className="kp-muted">Connecting wallet…</p>;
+  }
+
+  if (s.type === "wallet_switching_chain") {
+    return <p className="kp-muted">Switching network…</p>;
+  }
+
+  if (s.type === "wallet_sending") {
+    return <p className="kp-muted">Confirm the payment in your wallet…</p>;
+  }
+
+  if (s.type === "wallet_submitted") {
+    return (
+      <>
+        <p className="kp-muted">Transaction submitted.</p>
+        <div className="kp-row">
+          <div>Tx Hash</div>
+          <div
+            className="kp-muted"
+            style={{ overflow: "hidden", textOverflow: "ellipsis" }}
+          >
+            {s.txHash}
+          </div>
+        </div>
+        <p className="kp-muted" style={{ marginTop: 8 }}>
+          Waiting for confirmation…
+        </p>
+      </>
+    );
+  }
+
+
   return null;
 }
 

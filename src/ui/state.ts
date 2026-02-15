@@ -4,7 +4,7 @@ import type { KryptoPayError } from "../core/errors";
 
 /**
  * The user can choose how they want to pay.
- * Wallet will be implemented in later tasks; Manual is implemented now.
+ * Wallet and manual are both supported; wallet falls back to manual on failure (MVP).
  */
 export type PaymentMethod = "wallet" | "manual";
 
@@ -44,7 +44,12 @@ export type CheckoutState =
       type: "error";
       error: { code: string; message: string; recoverable: boolean };
       lastIntent?: ResolvedPaymentIntent;
-    };
+    }
+  | { type: "wallet_connecting"; intent: ResolvedPaymentIntent }
+  | { type: "wallet_switching_chain"; intent: ResolvedPaymentIntent }
+  | { type: "wallet_sending"; intent: ResolvedPaymentIntent; from: string }
+  | { type: "wallet_submitted"; intent: ResolvedPaymentIntent; txHash: string };
+
 
 /**
  * We keep controller config separate from state.
