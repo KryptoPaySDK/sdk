@@ -1,23 +1,27 @@
+// src/vanilla/openModal.ts
 import type { KryptoPayCheckoutOptions } from "../core/types";
 import type { CheckoutState } from "../ui/state";
 import { CheckoutController } from "../ui/controller";
 import { ensureStylesInjected } from "../ui/styles";
 import { applyThemeToElement } from "../ui/theme";
 
+/**
+ * Handle returned from the vanilla API so a merchant can close the modal programmatically.
+ */
 export type KryptoPayModalHandle = {
   close: () => void;
   getState: () => CheckoutState;
 };
 
 /**
- * Vanilla modal renderer:
- * - mounts DOM
- * - subscribes to controller state
- * - re-renders on state changes
+ * Vanilla renderer:
+ * - mounts DOM into document.body
+ * - subscribes to controller state and re-renders
  * - cleans up when controller transitions to idle
  *
- * NOTE: onClose is owned by the controller.
- * We do not call opts.onClose here to avoid double-calling.
+ * Important:
+ * - We do NOT call opts.onClose here. The controller owns onClose.
+ * - Cleanup is triggered by observing state.type === "idle".
  */
 export function openKryptoPayModal(
   opts: KryptoPayCheckoutOptions & {
@@ -34,6 +38,7 @@ export function openKryptoPayModal(
   modal.className = `kp-modal ${opts.classNames?.modal ?? ""}`;
   overlay.appendChild(modal);
 
+  // Apply theme tokens / CSS vars at overlay root (same behavior as React).
   applyThemeToElement(overlay, {
     theme: opts.theme,
     overlayOpacity: opts.overlayOpacity,
@@ -42,30 +47,41 @@ export function openKryptoPayModal(
   });
 
   const controller = new CheckoutController({
-    ...opts,
+    clientSecret: opts.clientSecret,
     baseUrl: opts.baseUrl,
     fetchImpl: opts.fetchImpl,
+
+    defaultMethod: opts.defaultMethod,
+    allowManual: opts.allowManual,
+    allowWallet: opts.allowWallet,
+
+    // Pass callbacks through (controller will call them).
+    onClose: opts.onClose,
+    onSuccess: opts.onSuccess,
+    onAwaitingConfirmation: opts.onAwaitingConfirmation,
+    onError: opts.onError,
   });
 
-  // Backdrop click closes
+  // Backdrop click closes the modal.
   overlay.addEventListener("mousedown", (e) => {
     if (e.target === overlay) controller.close();
   });
 
-  // Mount once
+  // Mount once.
   document.body.appendChild(overlay);
 
-  const unsubscribe = controller.subscribe((s) => {
-    render(modal, s, opts, controller);
+  // Subscribe and render.
+  const unsubscribe = controller.subscribe((state) => {
+    render(modal, state, opts, controller);
 
-    // When controller closes, it sets state to idle. We cleanup here.
-    if (s.type === "idle") {
+    // When controller closes, it sets state to idle. Clean up DOM + subscription.
+    if (state.type === "idle") {
       unsubscribe();
       overlay.remove();
     }
   });
 
-  // Open immediately
+  // Open immediately (vanilla usage pattern).
   void controller.open();
 
   return {
@@ -81,12 +97,13 @@ function render(
   controller: CheckoutController,
 ) {
   modal.innerHTML = "";
-  modal.appendChild(renderHeader(opts, controller));
+  modal.appendChild(renderHeader(state, opts, controller));
   modal.appendChild(renderBody(state, opts, controller));
   modal.appendChild(renderFooter(state, opts, controller));
 }
 
 function renderHeader(
+  state: CheckoutState,
   opts: KryptoPayCheckoutOptions,
   controller: CheckoutController,
 ) {
@@ -94,18 +111,53 @@ function renderHeader(
   header.className = `kp-header ${opts.classNames?.header ?? ""}`;
 
   const left = document.createElement("div");
+  left.style.display = "flex";
+  left.style.gap = "10px";
+  left.style.alignItems = "center";
+
+  if (opts.logoUrl) {
+    const img = document.createElement("img");
+    img.src = opts.logoUrl;
+    img.alt = "";
+    img.style.width = "24px";
+    img.style.height = "24px";
+    img.style.borderRadius = "6px";
+    img.style.objectFit = "cover";
+    left.appendChild(img);
+  }
+
+  const textWrap = document.createElement("div");
+
+  // Title row: title + optional mode badge
+  const titleRow = document.createElement("div");
+  titleRow.style.display = "flex";
+  titleRow.style.alignItems = "center";
+  titleRow.style.gap = "8px";
 
   const title = document.createElement("div");
   title.className = "kp-title";
   title.textContent = opts.labels?.title ?? "Checkout";
-  left.appendChild(title);
+  titleRow.appendChild(title);
+
+  const mode = getIntentModeFromState(state);
+  if (mode === "testnet") {
+    const badge = document.createElement("span");
+    badge.className = "kp-badge";
+    badge.dataset.variant = "testnet";
+    badge.textContent = "Test mode";
+    titleRow.appendChild(badge);
+  }
+
+  textWrap.appendChild(titleRow);
 
   if (opts.merchantName) {
     const sub = document.createElement("div");
     sub.className = `kp-muted ${opts.classNames?.helperText ?? ""}`;
     sub.textContent = opts.merchantName;
-    left.appendChild(sub);
+    textWrap.appendChild(sub);
   }
+
+  left.appendChild(textWrap);
 
   const closeBtn = document.createElement("button");
   closeBtn.className = `kp-btn ${opts.classNames?.secondaryButton ?? ""}`;
@@ -125,20 +177,22 @@ function renderBody(
   const body = document.createElement("div");
   body.className = `kp-body ${opts.classNames?.body ?? ""}`;
 
-  const muted = (text: string) => {
-    const p = document.createElement("p");
-    p.className = "kp-muted";
-    p.textContent = text;
-    return p;
+  const labels = opts.labels ?? {};
+
+  const p = (text: string) => {
+    const el = document.createElement("p");
+    el.className = "kp-muted";
+    el.textContent = text;
+    return el;
   };
 
   if (state.type === "loading_intent") {
-    body.appendChild(muted("Preparing checkout…"));
+    body.appendChild(p("Preparing checkout…"));
     return body;
   }
 
   if (state.type === "choose_method") {
-    if (state.message) body.appendChild(muted(state.message));
+    if (state.message) body.appendChild(p(state.message));
 
     body.appendChild(
       renderRow(
@@ -153,16 +207,15 @@ function renderBody(
 
     tabs.appendChild(
       renderTab(
-        opts.labels?.payWithWallet ?? "Pay with wallet",
+        labels.payWithWallet ?? "Pay with wallet",
         state.selected === "wallet",
         () => controller.selectMethod("wallet"),
         opts.classNames?.tab,
       ),
     );
-
     tabs.appendChild(
       renderTab(
-        opts.labels?.payManually ?? "Pay manually",
+        labels.payManually ?? "Pay manually",
         state.selected === "manual",
         () => controller.selectMethod("manual"),
         opts.classNames?.tab,
@@ -171,44 +224,42 @@ function renderBody(
 
     body.appendChild(tabs);
     body.appendChild(
-      muted(
-        "You can pay with a connected wallet or manually send the funds. If wallet payment fails, manual payment is available.",
+      p(
+        "Choose how you want to pay. If wallet connection fails, you can pay manually.",
       ),
     );
     return body;
   }
 
-  // WALLET STATES
+  // Wallet states (parity with React)
   if (state.type === "wallet_connecting") {
-    body.appendChild(muted("Connecting to your wallet…"));
-    body.appendChild(muted("Approve the connection request in your wallet."));
+    body.appendChild(p(labels.connectWallet ?? "Connecting wallet…"));
     return body;
   }
 
   if (state.type === "wallet_switching_chain") {
-    body.appendChild(muted("Switching network…"));
-    body.appendChild(
-      muted("Approve the network switch request in your wallet."),
-    );
+    body.appendChild(p(labels.switchNetwork ?? "Switching network…"));
     return body;
   }
 
   if (state.type === "wallet_sending") {
-    body.appendChild(muted("Confirm the payment in your wallet…"));
+    body.appendChild(
+      p(labels.sendPayment ?? "Confirm the payment in your wallet…"),
+    );
     body.appendChild(renderRow("From", shortAddr(state.from)));
     return body;
   }
 
   if (state.type === "wallet_submitted") {
-    body.appendChild(muted("Transaction submitted."));
+    body.appendChild(p("Transaction submitted."));
     body.appendChild(renderRow("Tx Hash", state.txHash));
-    body.appendChild(muted("Waiting for confirmations…"));
+    body.appendChild(p("Waiting for confirmations…"));
     return body;
   }
 
-  // MANUAL FLOW
+  // Manual flow
   if (state.type === "manual_instructions") {
-    body.appendChild(muted("Send the exact amount to the address below."));
+    body.appendChild(p("Send the exact amount to the address below."));
 
     body.appendChild(
       renderRow(
@@ -230,9 +281,7 @@ function renderBody(
     code.textContent = state.intent.expected_wallet;
     body.appendChild(code);
 
-    body.appendChild(
-      muted("We’ll update automatically once payment is detected."),
-    );
+    body.appendChild(p("We’ll update automatically once payment is detected."));
     return body;
   }
 
@@ -244,7 +293,7 @@ function renderBody(
           ? "Payment detected, awaiting confirmations…"
           : "Updating…";
 
-    body.appendChild(muted(statusText));
+    body.appendChild(p(statusText));
     body.appendChild(renderRow("Status", state.intent.status));
     return body;
   }
@@ -253,13 +302,12 @@ function renderBody(
     const title = document.createElement("div");
     title.className = "kp-title";
     title.textContent =
-      opts.labels?.awaitingConfirmationTitle ??
-      "Payment is awaiting confirmation";
+      labels.awaitingConfirmationTitle ?? "Payment is awaiting confirmation";
     body.appendChild(title);
 
     body.appendChild(
-      muted(
-        opts.labels?.awaitingConfirmationBody ??
+      p(
+        labels.awaitingConfirmationBody ??
           "Your transfer was detected. Confirmations can take a bit. You can close this window and confirm later in your dashboard, or keep waiting here.",
       ),
     );
@@ -269,12 +317,10 @@ function renderBody(
   if (state.type === "success") {
     const title = document.createElement("div");
     title.className = "kp-title kp-success";
-    title.textContent = opts.labels?.successTitle ?? "Payment successful";
+    title.textContent = labels.successTitle ?? "Payment successful";
     body.appendChild(title);
 
-    body.appendChild(
-      muted(opts.labels?.successBody ?? "You can close this window."),
-    );
+    body.appendChild(p(labels.successBody ?? "You can close this window."));
     return body;
   }
 
@@ -285,7 +331,7 @@ function renderBody(
     body.appendChild(title);
 
     body.appendChild(
-      muted(
+      p(
         "This payment intent expired. Please start again from the merchant checkout.",
       ),
     );
@@ -304,7 +350,7 @@ function renderBody(
     msg.style.marginTop = "8px";
     body.appendChild(msg);
 
-    if (state.error.recoverable) body.appendChild(muted("Please try again."));
+    if (state.error.recoverable) body.appendChild(p("Please try again."));
     return body;
   }
 
@@ -318,6 +364,8 @@ function renderFooter(
 ) {
   const footer = document.createElement("div");
   footer.className = `kp-footer ${opts.classNames?.footer ?? ""}`;
+
+  const labels = opts.labels ?? {};
 
   const primary = (text: string, onClick: () => void) => {
     const btn = document.createElement("button");
@@ -342,11 +390,11 @@ function renderFooter(
 
   if (state.type === "awaiting_confirmation") {
     footer.appendChild(
-      secondary(opts.labels?.close ?? "Close", () => controller.close()),
+      secondary(labels.close ?? "Close", () => controller.close()),
     );
     footer.appendChild(
       primary(
-        opts.labels?.keepWaiting ?? "Keep waiting",
+        labels.keepWaiting ?? "Keep waiting",
         () => void controller.keepWaiting(),
       ),
     );
@@ -359,12 +407,12 @@ function renderFooter(
     state.type === "error"
   ) {
     footer.appendChild(
-      primary(opts.labels?.close ?? "Close", () => controller.close()),
+      primary(labels.close ?? "Close", () => controller.close()),
     );
     return footer;
   }
 
-  // In-progress states: no footer buttons (header close always available)
+  // In-progress states: no footer buttons (close is always in header).
   return footer;
 }
 
@@ -396,6 +444,13 @@ function renderTab(
   btn.textContent = label;
   btn.onclick = onClick;
   return btn;
+}
+
+function getIntentModeFromState(
+  state: CheckoutState,
+): "testnet" | "mainnet" | null {
+  const s: any = state;
+  return s?.intent?.mode ?? null;
 }
 
 function formatAmount(amountUnits: number, decimals: number) {

@@ -92,6 +92,21 @@ const CSS = `
   padding: 10px;
   overflow-x: auto;
 }
+
+.kp-badge {
+  font-size: 12px;
+  line-height: 1;
+  padding: 6px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(0,0,0,0.12);
+  background: rgba(0,0,0,0.04);
+}
+
+.kp-badge[data-variant="testnet"] {
+  border-color: rgba(255,165,0,0.35);
+  background: rgba(255,165,0,0.12);
+}
+
 .kp-success { color: var(--kp-color-success); }
 .kp-danger { color: var(--kp-color-danger); }
 `;

@@ -16,15 +16,12 @@ import { sendErc20Transfer } from "../wallet/sendUsdc";
 /**
  * CheckoutController
  *
- * Framework-agnostic state machine that powers:
+ * Framework-agnostic state machine used by:
  * - React modal renderer
  * - Vanilla modal renderer
  *
- * It controls:
- * - resolving intents
- * - wallet/manual flows
- * - polling + status transitions
- * - awaiting-confirmation UX
+ * UI subscribes to state changes and renders.
+ * All checkout logic lives here.
  */
 export class CheckoutController {
   private config: ControllerConfig;
@@ -36,12 +33,12 @@ export class CheckoutController {
   private isRunning = false;
   private stopRequested = false;
 
-  // "Awaiting confirmation" UX
-  private awaitingThresholdMs = 60_000; // 60 seconds
+  // UX: after a while in pending_confirmations, show a safe-to-close screen.
+  private awaitingThresholdMs = 60_000; // 60s
   private pollIntervalMs = 2_500;
-  private pollTimeoutMs = 10 * 60_000; // 10 minutes total
+  private pollTimeoutMs = 10 * 60_000; // 10 minutes
 
-  // Wallet tracking (useful for callbacks/UI even before API stores tx_hash)
+  // Wallet tracking: include tx hash in callbacks even if API doesn't store it yet.
   private lastTxHash: string | null = null;
 
   constructor(config: ControllerConfig) {
@@ -59,12 +56,15 @@ export class CheckoutController {
 
   /**
    * Subscribe to state changes.
-   * Returns an unsubscribe function (must return void for React useEffect cleanup).
+   * Returns an unsubscribe function.
    */
   subscribe(fn: (state: CheckoutState) => void) {
     this.listeners.add(fn);
+
+    // Emit immediately so UI renders current state right away.
     fn(this.state);
 
+    // Cleanup must return void.
     return () => {
       this.listeners.delete(fn);
     };
@@ -80,7 +80,9 @@ export class CheckoutController {
   }
 
   /**
-   * Resolves the intent from clientSecret and enters choose_method.
+   * open()
+   * - resolves the payment intent from clientSecret
+   * - moves into choose_method
    */
   async open() {
     if (this.isRunning) return;
@@ -109,9 +111,10 @@ export class CheckoutController {
   }
 
   /**
-   * Close ends the modal session:
-   * - stops background polling
-   * - transitions back to idle
+   * close()
+   * - stops polling
+   * - calls onClose
+   * - returns to idle
    */
   close() {
     this.stopRequested = true;
@@ -122,7 +125,7 @@ export class CheckoutController {
   }
 
   /**
-   * Switch tab between wallet/manual on the choose_method screen.
+   * Choose wallet/manual tab in the choose_method screen.
    */
   selectMethod(method: PaymentMethod) {
     if (this.state.type !== "choose_method") return;
@@ -137,14 +140,14 @@ export class CheckoutController {
   }
 
   /**
-   * Continue from choose_method into the selected flow.
+   * Continue into the selected method.
    */
   async continue() {
     if (this.state.type !== "choose_method") return;
 
     const { intent, selected } = this.state;
 
-    // New attempt: clear previous wallet hash (if any)
+    // New attempt => reset tx hash
     this.lastTxHash = null;
 
     if (selected === "manual") {
@@ -160,19 +163,18 @@ export class CheckoutController {
   }
 
   /**
-   * If user is on awaiting_confirmation screen, they can choose to keep waiting.
+   * If user is in awaiting_confirmation, they can choose to keep waiting.
    */
   async keepWaiting() {
-    const current = this.state;
-    if (current.type !== "awaiting_confirmation") return;
+    if (this.state.type !== "awaiting_confirmation") return;
 
     this.setState({
       type: "waiting",
-      intent: current.intent,
+      intent: this.state.intent,
       pendingConfirmationsSince: Date.now(),
     });
 
-    await this.startPolling(current.intent);
+    await this.startPolling(this.state.intent);
   }
 
   private getInitialMethod(): PaymentMethod {
@@ -181,45 +183,57 @@ export class CheckoutController {
     if (pref === "wallet" && this.config.allowWallet) return "wallet";
     if (pref === "manual" && this.config.allowManual) return "manual";
 
+    // fallback
     if (this.config.allowWallet) return "wallet";
     return "manual";
   }
 
   /**
    * Wallet flow (EOA / injected only, MVP):
-   * 1) connect wallet
-   * 2) ensure chain matches intent.chain_id
-   * 3) send ERC-20 transfer to expected_wallet
-   * 4) poll until succeeded/expired
+   * 1) Connect injected wallet (window.ethereum)
+   * 2) Ensure chain matches intent.chain_id (switch if needed)
+   * 3) Send USDC transfer (ERC-20 transfer)
+   * 4) Poll until watcher confirms (succeeded/expired)
    *
-   * MVP decision: if chain switch fails (including 4902), fall back to manual.
+   * MVP decision:
+   * - we do NOT call wallet_addEthereumChain.
+   * - if switching fails (including 4902), fall back to manual.
    */
   private async startWalletFlow(intent: ResolvedPaymentIntent) {
     try {
       const provider = getInjectedProvider();
       if (!provider) {
-        throw new Error(
-          "No injected wallet found. Install MetaMask or use manual payment.",
-        );
+        const e = new Error(
+          "No injected wallet found. Install a wallet extension or use manual payment.",
+        ) as any;
+        e.code = "wallet_not_found";
+        throw e;
       }
 
       this.setState({ type: "wallet_connecting", intent });
 
       const accounts = await requestAccounts(provider);
       const from = accounts?.[0];
-      if (!from) throw new Error("No wallet account available.");
+      if (!from) {
+        const e = new Error("No wallet account available.") as any;
+        e.code = "wallet_no_account";
+        throw e;
+      }
 
       const currentChainId = await getChainId(provider);
-
       if (currentChainId !== intent.chain_id) {
         this.setState({ type: "wallet_switching_chain", intent });
 
-        // Option 1: do not add chain; attempt switch only.
         await switchEthereumChain(provider, intent.chain_id);
 
+        // Defensive re-check
         const afterSwitch = await getChainId(provider);
         if (afterSwitch !== intent.chain_id) {
-          throw new Error("Wallet did not switch to the correct network.");
+          const e = new Error(
+            "Wallet did not switch to the correct network.",
+          ) as any;
+          e.code = "wallet_wrong_network";
+          throw e;
         }
       }
 
@@ -237,12 +251,13 @@ export class CheckoutController {
 
       this.setState({ type: "wallet_submitted", intent, txHash });
 
-      // Wait for backend/watcher to detect and confirm.
+      // Wait for backend/watcher to detect & confirm the transfer.
       await this.startPolling(intent);
     } catch (err) {
       const pub = toPublicError(err);
 
-      // Wallet failure should guide the user to manual if available.
+      // Wallet failure should not dead-end the user.
+      // If manual is allowed, fall back to manual and keep polling.
       if (this.config.allowManual) {
         this.setState({
           type: "choose_method",
@@ -251,6 +266,7 @@ export class CheckoutController {
           message: pub.message,
         });
 
+        // Auto-enter manual to keep flow simple.
         this.setState({ type: "manual_instructions", intent });
         await this.startPolling(intent);
         return;
@@ -262,10 +278,10 @@ export class CheckoutController {
   }
 
   /**
-   * Polling loop:
-   * - repeatedly resolves intent
-   * - updates UI based on intermediate statuses
-   * - enters awaiting_confirmation if pending_confirmations > threshold
+   * startPolling()
+   * - resolves intent repeatedly
+   * - updates intermediate UI states
+   * - ends on succeeded / expired
    */
   private async startPolling(initialIntent: ResolvedPaymentIntent) {
     if (this.stopRequested) return;
@@ -332,7 +348,8 @@ export class CheckoutController {
       if (finalIntent.status === "succeeded") {
         this.config.onSuccess?.({
           payment_intent_id: finalIntent.id,
-          tx_hash: this.lastTxHash ?? "",
+          // Prefer wallet tx hash if available.
+          tx_hash: this.lastTxHash ?? (finalIntent as any).tx_hash ?? "",
           chain: finalIntent.chain,
           mode: finalIntent.mode,
         });
@@ -346,6 +363,7 @@ export class CheckoutController {
         return;
       }
 
+      // Timeout => if pending_confirmations, show awaiting_confirmation
       if (result.timedOut) {
         if (finalIntent.status === "pending_confirmations") {
           this.config.onAwaitingConfirmation?.({
