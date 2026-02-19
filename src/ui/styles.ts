@@ -107,6 +107,26 @@ const CSS = `
   background: rgba(255,165,0,0.12);
 }
 
+.kp-statusRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kp-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid rgba(0,0,0,0.18);
+  border-top-color: rgba(0,0,0,0.7);
+  animation: kp-spin 0.8s linear infinite;
+}
+
+@keyframes kp-spin {
+  to { transform: rotate(360deg); }
+}
+
+
 .kp-success { color: var(--kp-color-success); }
 .kp-danger { color: var(--kp-color-danger); }
 `;

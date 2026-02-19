@@ -32,11 +32,20 @@
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "format": "prettier -w ."
+    "format": "prettier -w .",
+    "prepublishOnly": "npm run lint && npm run typecheck && npm run build"
   },
   "peerDependencies": {
     "react": ">=18",
     "react-dom": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

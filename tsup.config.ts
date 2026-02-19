@@ -10,6 +10,8 @@ export default defineConfig([
     clean: true,
     treeshake: true,
     outDir: "dist",
+    platform: "browser",
+    external: ["react", "react-dom"],
   },
 
   // React entry: @kryptopay/sdk/react

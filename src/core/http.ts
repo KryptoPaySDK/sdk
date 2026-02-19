@@ -20,6 +20,45 @@ async function safeJson(res: Response): Promise<any | null> {
 }
 
 /**
+ * Your API currently returns snake_case keys.
+ * This normalizer also supports camelCase keys so the SDK remains resilient
+ * if you ever adjust the API response shape or wrap fields differently.
+ */
+function normalizeResolvedIntent(raw: any): Partial<ResolvedPaymentIntent> {
+  if (!raw || typeof raw !== "object") return {};
+
+  // support both "confirmations_required" and "confirmationsRequired", etc
+  const normalized: Partial<ResolvedPaymentIntent> = {
+    id: raw.id,
+    status: raw.status,
+
+    mode: raw.mode,
+    chain: raw.chain,
+    chain_id: raw.chain_id ?? raw.chainId,
+    confirmations_required:
+      raw.confirmations_required ?? raw.confirmationsRequired,
+
+    amount_units: raw.amount_units ?? raw.amountUnits,
+    decimals: raw.decimals,
+
+    token_symbol: raw.token_symbol ?? raw.tokenSymbol,
+    token_address: raw.token_address ?? raw.tokenAddress,
+
+    expected_wallet: raw.expected_wallet ?? raw.expectedWallet,
+
+    expires_at: raw.expires_at ?? raw.expiresAt,
+    lane: raw.lane,
+    metadata: raw.metadata ?? {},
+  };
+
+  // Defensive defaults (these are safe for UI rendering)
+  if (!normalized.metadata) normalized.metadata = {};
+  if (!normalized.lane) normalized.lane = "sdk" as any;
+
+  return normalized;
+}
+
+/**
  * resolveIntent()
  *
  * Calls your public resolve endpoint:
@@ -68,7 +107,6 @@ export async function resolveIntent(
   }
 
   if (res.status === 404) {
-    // Your API returns { error: "intent_not_found" }
     throw new KryptoPayError({
       code: "intent_not_found",
       message: "Payment intent not found.",
@@ -78,7 +116,6 @@ export async function resolveIntent(
   }
 
   if (res.status === 410) {
-    // Your API returns { error: "intent_expired" }
     throw new KryptoPayError({
       code: "intent_expired",
       message: "Payment intent has expired.",
@@ -105,9 +142,9 @@ export async function resolveIntent(
     });
   }
 
-  // Validate response shape (exact keys we rely on)
-  const intent = payload as Partial<ResolvedPaymentIntent>;
+  const intent = normalizeResolvedIntent(payload);
 
+  // Validate response shape (exact keys we rely on after normalization)
   const required: (keyof ResolvedPaymentIntent)[] = [
     "id",
     "status",
