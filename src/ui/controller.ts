@@ -13,6 +13,11 @@ import {
 } from "../wallet/injected";
 import { sendErc20Transfer } from "../wallet/sendUsdc";
 
+function isAbortError(err: unknown): boolean {
+  const e = err as { name?: string; code?: string | number } | null;
+  return e?.name === "AbortError" || e?.code === "ABORT_ERR";
+}
+
 /**
  * CheckoutController
  *
@@ -32,6 +37,8 @@ export class CheckoutController {
   // Polling control
   private isRunning = false;
   private stopRequested = false;
+  private activePollAbort: AbortController | null = null;
+  private activePollRunId = 0;
 
   // UX: after a while in pending_confirmations, show a safe-to-close screen.
   private awaitingThresholdMs = 60_000; // 60s
@@ -40,6 +47,7 @@ export class CheckoutController {
 
   // Wallet tracking: include tx hash in callbacks even if API doesn't store it yet.
   private lastTxHash: string | null = null;
+  private hasEmittedAwaitingConfirmation = false;
 
   constructor(config: ControllerConfig) {
     this.config = {
@@ -89,6 +97,7 @@ export class CheckoutController {
 
     this.isRunning = true;
     this.stopRequested = false;
+    this.hasEmittedAwaitingConfirmation = false;
 
     this.setState({ type: "loading_intent" });
 
@@ -104,6 +113,7 @@ export class CheckoutController {
         selected: this.getInitialMethod(),
       });
     } catch (err) {
+      this.isRunning = false;
       const pub = toPublicError(err);
       this.config.onError?.(pub);
       this.setState({ type: "error", error: pub });
@@ -117,11 +127,46 @@ export class CheckoutController {
    * - returns to idle
    */
   close() {
+    this.stopAndReset({ emitOnClose: true });
+  }
+
+  /**
+   * dispose()
+   * - stops polling
+   * - does NOT call onClose
+   * - used by framework wrappers for internal teardown
+   */
+  dispose() {
+    this.stopAndReset({ emitOnClose: false });
+  }
+
+  private stopAndReset(opts: { emitOnClose: boolean }) {
     this.stopRequested = true;
     this.isRunning = false;
+    this.cancelActivePolling();
 
-    this.config.onClose?.();
-    this.setState({ type: "idle" });
+    if (opts.emitOnClose) {
+      this.config.onClose?.();
+    }
+
+    if (this.state.type !== "idle") {
+      this.setState({ type: "idle" });
+    }
+  }
+
+  private cancelActivePolling() {
+    if (this.activePollAbort) {
+      this.activePollAbort.abort();
+      this.activePollAbort = null;
+    }
+  }
+
+  private emitAwaitingConfirmationOnce(paymentIntentId: string) {
+    if (this.hasEmittedAwaitingConfirmation) return;
+    this.hasEmittedAwaitingConfirmation = true;
+    this.config.onAwaitingConfirmation?.({
+      payment_intent_id: paymentIntentId,
+    });
   }
 
   /**
@@ -149,10 +194,10 @@ export class CheckoutController {
 
     // New attempt => reset tx hash
     this.lastTxHash = null;
+    this.hasEmittedAwaitingConfirmation = false;
 
     if (selected === "manual") {
-      this.setState({ type: "manual_instructions", intent });
-      await this.startPolling(intent);
+      await this.startPolling(intent, { preferManualInstructions: true });
       return;
     }
 
@@ -267,8 +312,7 @@ export class CheckoutController {
         });
 
         // Auto-enter manual to keep flow simple.
-        this.setState({ type: "manual_instructions", intent });
-        await this.startPolling(intent);
+        await this.startPolling(intent, { preferManualInstructions: true });
         return;
       }
 
@@ -283,35 +327,57 @@ export class CheckoutController {
    * - updates intermediate UI states
    * - ends on succeeded / expired
    */
-  private async startPolling(initialIntent: ResolvedPaymentIntent) {
+  private async startPolling(
+    initialIntent: ResolvedPaymentIntent,
+    opts: { preferManualInstructions?: boolean } = {},
+  ) {
     if (this.stopRequested) return;
 
-    let pendingSince: number | undefined;
+    // One active poller per controller. Starting a new run cancels the previous one.
+    this.cancelActivePolling();
+    const runId = ++this.activePollRunId;
+    const pollAbort = new AbortController();
+    this.activePollAbort = pollAbort;
 
-    this.setState({
-      type: "waiting",
-      intent: initialIntent,
-      pendingConfirmationsSince: undefined,
-    });
+    const preferManualInstructions = !!opts.preferManualInstructions;
+    let pendingSince: number | undefined;
+    let stopForAwaitingConfirmation = false;
+
+    if (preferManualInstructions) {
+      this.setState({
+        type: "manual_instructions",
+        intent: initialIntent,
+      });
+    } else {
+      this.setState({
+        type: "waiting",
+        intent: initialIntent,
+        pendingConfirmationsSince: undefined,
+      });
+    }
 
     try {
       const result = await waitForFinalStatus(this.config.clientSecret, {
         baseUrl: this.config.baseUrl,
         fetchImpl: this.config.fetchImpl,
+        signal: pollAbort.signal,
         intervalMs: this.pollIntervalMs,
         timeoutMs: this.pollTimeoutMs,
+        shouldStop: () =>
+          this.stopRequested ||
+          runId !== this.activePollRunId ||
+          stopForAwaitingConfirmation,
         onUpdate: (intent) => {
-          if (this.stopRequested) return;
+          if (this.stopRequested || runId !== this.activePollRunId) return;
 
           if (intent.status === "pending_confirmations") {
             if (!pendingSince) pendingSince = Date.now();
 
             const elapsed = Date.now() - pendingSince;
             if (elapsed >= this.awaitingThresholdMs) {
-              this.config.onAwaitingConfirmation?.({
-                payment_intent_id: intent.id,
-              });
+              this.emitAwaitingConfirmationOnce(intent.id);
               this.setState({ type: "awaiting_confirmation", intent });
+              stopForAwaitingConfirmation = true;
               return;
             }
 
@@ -325,11 +391,18 @@ export class CheckoutController {
 
           if (intent.status === "requires_payment") {
             pendingSince = undefined;
-            this.setState({
-              type: "waiting",
-              intent,
-              pendingConfirmationsSince: undefined,
-            });
+            if (preferManualInstructions) {
+              this.setState({
+                type: "manual_instructions",
+                intent,
+              });
+            } else {
+              this.setState({
+                type: "waiting",
+                intent,
+                pendingConfirmationsSince: undefined,
+              });
+            }
             return;
           }
 
@@ -341,7 +414,8 @@ export class CheckoutController {
         },
       });
 
-      if (this.stopRequested) return;
+      if (this.stopRequested || runId !== this.activePollRunId) return;
+      if (result.stopped) return;
 
       const finalIntent = result.intent;
 
@@ -366,10 +440,13 @@ export class CheckoutController {
       // Timeout => if pending_confirmations, show awaiting_confirmation
       if (result.timedOut) {
         if (finalIntent.status === "pending_confirmations") {
-          this.config.onAwaitingConfirmation?.({
-            payment_intent_id: finalIntent.id,
-          });
+          this.emitAwaitingConfirmationOnce(finalIntent.id);
           this.setState({ type: "awaiting_confirmation", intent: finalIntent });
+          return;
+        }
+
+        if (preferManualInstructions && finalIntent.status === "requires_payment") {
+          this.setState({ type: "manual_instructions", intent: finalIntent });
           return;
         }
 
@@ -380,7 +457,13 @@ export class CheckoutController {
         });
       }
     } catch (err) {
-      if (this.stopRequested) return;
+      if (
+        isAbortError(err) ||
+        this.stopRequested ||
+        runId !== this.activePollRunId
+      ) {
+        return;
+      }
 
       const pub = toPublicError(err);
       this.config.onError?.(pub);
@@ -394,6 +477,10 @@ export class CheckoutController {
           : undefined;
 
       this.setState({ type: "error", error: pub, lastIntent });
+    } finally {
+      if (this.activePollRunId === runId && this.activePollAbort === pollAbort) {
+        this.activePollAbort = null;
+      }
     }
   }
 }

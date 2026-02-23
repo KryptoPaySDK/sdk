@@ -4,6 +4,7 @@ import type { ResolvedPaymentIntent } from "./types";
 export type HttpClientOptions = {
   baseUrl?: string; // e.g. https://api.kryptopay.xyz
   fetchImpl?: typeof fetch; // injection for tests
+  signal?: AbortSignal;
 };
 
 export const DEFAULT_BASE_URL = "http://localhost:3000";
@@ -17,6 +18,11 @@ async function safeJson(res: Response): Promise<any | null> {
   } catch {
     return null;
   }
+}
+
+function isAbortError(err: unknown): boolean {
+  const e = err as { name?: string; code?: string | number } | null;
+  return e?.name === "AbortError" || e?.code === "ABORT_ERR";
 }
 
 /**
@@ -43,10 +49,15 @@ export async function resolveIntent(
     res = await fetchFn(`${baseUrl}/v1/payment_intents/resolve`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: opts.signal,
       // IMPORTANT: your API expects snake_case key
       body: JSON.stringify({ client_secret: clientSecret }),
     });
   } catch (err) {
+    if (isAbortError(err)) {
+      throw err;
+    }
+
     throw new KryptoPayError({
       code: "network_error",
       message: "Network error while resolving payment intent.",

@@ -25,6 +25,7 @@ export type KryptoPayModalProps = Omit<
  */
 export function KryptoPayModal(props: KryptoPayModalProps) {
   const [state, setState] = useState<CheckoutState>({ type: "idle" });
+  const prevOpenRef = useRef<boolean | null>(null);
 
   // Ensure base modal styles exist once.
   useEffect(() => {
@@ -87,13 +88,34 @@ export function KryptoPayModal(props: KryptoPayModalProps) {
   useEffect(() => controller.subscribe(setState), [controller]);
 
   // Drive controller open/close from the `open` prop.
+  // We only close on true->false transitions to avoid calling onClose on initial mount.
   useEffect(() => {
-    if (props.open) {
-      void controller.open();
-    } else {
-      controller.close();
+    const prevOpen = prevOpenRef.current;
+
+    if (prevOpen === null) {
+      if (props.open) {
+        void controller.open();
+      }
+      prevOpenRef.current = props.open;
+      return;
     }
+
+    if (!prevOpen && props.open) {
+      void controller.open();
+    } else if (prevOpen && !props.open) {
+      controller.close();
+    } else if (prevOpen && props.open) {
+      // Controller can be recreated while open (e.g. new clientSecret); open the new instance.
+      void controller.open();
+    }
+
+    prevOpenRef.current = props.open;
   }, [props.open, controller]);
+
+  // Dispose stale controller instances without emitting onClose.
+  useEffect(() => {
+    return () => controller.dispose();
+  }, [controller]);
 
   if (!props.open) return null;
 
