@@ -100,8 +100,9 @@ export function openKryptoPayModal(
     }, SUCCESS_AUTO_CLOSE_SECONDS * 1000);
   };
 
-  // Subscribe and render.
-  const unsubscribe = controller.subscribe((state) => {
+  // `subscribe` may synchronously emit the current state, so initialize first.
+  let unsubscribe: (() => void) | null = null;
+  unsubscribe = controller.subscribe((state) => {
     if (state.type === "success" && prevType !== "success") {
       startSuccessTimers();
     } else if (state.type !== "success" && prevType === "success") {
@@ -114,7 +115,7 @@ export function openKryptoPayModal(
     // When controller closes, it sets state to idle. Clean up DOM + subscription.
     if (state.type === "idle") {
       clearSuccessTimers();
-      unsubscribe();
+      unsubscribe?.();
       overlay.remove();
     }
   });
