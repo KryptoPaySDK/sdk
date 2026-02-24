@@ -76,6 +76,7 @@ export function openKryptoPayModal(
   let successIntervalId: number | null = null;
   let successTimeoutId: number | null = null;
   let prevType: CheckoutState["type"] | null = null;
+  let hasStarted = false;
 
   const clearSuccessTimers = () => {
     if (successIntervalId) window.clearInterval(successIntervalId);
@@ -113,7 +114,7 @@ export function openKryptoPayModal(
     render(modal, state, opts, controller, successSecondsLeft);
 
     // When controller closes, it sets state to idle. Clean up DOM + subscription.
-    if (state.type === "idle") {
+    if (state.type === "idle" && hasStarted) {
       clearSuccessTimers();
       unsubscribe?.();
       overlay.remove();
@@ -121,6 +122,7 @@ export function openKryptoPayModal(
   });
 
   // Open immediately (vanilla usage pattern).
+  hasStarted = true;
   void controller.open();
 
   return {
