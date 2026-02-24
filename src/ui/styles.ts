@@ -107,6 +107,32 @@ const CSS = `
   background: rgba(255,165,0,0.12);
 }
 
+.kp-statusRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.kp-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid rgba(255,255,255,0.22);
+  border-top-color: var(--kp-color-text);
+  flex: 0 0 auto;
+  animation: kp-spin 0.8s linear infinite;
+}
+
+@keyframes kp-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kp-spinner {
+    animation: none;
+  }
+}
+
 .kp-success { color: var(--kp-color-success); }
 .kp-danger { color: var(--kp-color-danger); }
 `;

@@ -16,6 +16,8 @@ export type KryptoPayModalProps = Omit<
   fetchImpl?: typeof fetch; // injection for Cosmos/tests
 };
 
+const SUCCESS_AUTO_CLOSE_SECONDS = 10;
+
 /**
  * React renderer for the KryptoPay checkout modal.
  *
@@ -26,6 +28,11 @@ export type KryptoPayModalProps = Omit<
 export function KryptoPayModal(props: KryptoPayModalProps) {
   const [state, setState] = useState<CheckoutState>({ type: "idle" });
   const prevOpenRef = useRef<boolean | null>(null);
+  const [successSecondsLeft, setSuccessSecondsLeft] = useState<number | null>(
+    null,
+  );
+  const successIntervalRef = useRef<number | null>(null);
+  const successTimeoutRef = useRef<number | null>(null);
 
   // Ensure base modal styles exist once.
   useEffect(() => {
@@ -117,6 +124,44 @@ export function KryptoPayModal(props: KryptoPayModalProps) {
     return () => controller.dispose();
   }, [controller]);
 
+  // Auto-close countdown after success.
+  useEffect(() => {
+    const clearTimers = () => {
+      if (successIntervalRef.current) {
+        window.clearInterval(successIntervalRef.current);
+      }
+      if (successTimeoutRef.current) {
+        window.clearTimeout(successTimeoutRef.current);
+      }
+      successIntervalRef.current = null;
+      successTimeoutRef.current = null;
+    };
+
+    if (state.type !== "success") {
+      clearTimers();
+      setSuccessSecondsLeft(null);
+      return;
+    }
+
+    clearTimers();
+    setSuccessSecondsLeft(SUCCESS_AUTO_CLOSE_SECONDS);
+
+    successIntervalRef.current = window.setInterval(() => {
+      setSuccessSecondsLeft((prev) => {
+        if (prev === null) return null;
+        return Math.max(0, prev - 1);
+      });
+    }, 1000);
+
+    successTimeoutRef.current = window.setTimeout(() => {
+      controller.close();
+    }, SUCCESS_AUTO_CLOSE_SECONDS * 1000);
+
+    return () => {
+      clearTimers();
+    };
+  }, [state.type, controller]);
+
   if (!props.open) return null;
 
   return (
@@ -131,6 +176,7 @@ export function KryptoPayModal(props: KryptoPayModalProps) {
       overlayOpacity={props.overlayOpacity}
       zIndex={props.zIndex}
       size={props.size}
+      successSecondsLeft={successSecondsLeft}
       onBackdropClick={() => controller.close()}
     />
   );
@@ -147,6 +193,7 @@ function Overlay(props: {
   overlayOpacity?: number;
   zIndex?: number;
   size?: KryptoPayCheckoutOptions["size"];
+  successSecondsLeft: number | null;
   onBackdropClick: () => void;
 }) {
   const overlayRef = useRef<HTMLDivElement | null>(null);
@@ -226,6 +273,7 @@ function Overlay(props: {
             controller={props.controller}
             labels={labels}
             classNames={cn}
+            successSecondsLeft={props.successSecondsLeft}
           />
         </div>
 
@@ -247,13 +295,14 @@ function RenderBody(props: {
   controller: CheckoutController;
   labels: NonNullable<KryptoPayCheckoutOptions["labels"]>;
   classNames: NonNullable<KryptoPayCheckoutOptions["classNames"]>;
+  successSecondsLeft: number | null;
 }) {
   const s = props.state;
   const labels = props.labels;
   const cn = props.classNames;
 
   if (s.type === "loading_intent") {
-    return <p className="kp-muted">Preparing checkout…</p>;
+    return <LoadingStatus text="Preparing checkout..." />;
   }
 
   if (s.type === "choose_method") {
@@ -299,22 +348,18 @@ function RenderBody(props: {
 
   // Wallet states (parity with vanilla)
   if (s.type === "wallet_connecting") {
-    return (
-      <p className="kp-muted">{labels.connectWallet ?? "Connecting wallet…"}</p>
-    );
+    return <LoadingStatus text={labels.connectWallet ?? "Connecting wallet..."} />;
   }
 
   if (s.type === "wallet_switching_chain") {
-    return (
-      <p className="kp-muted">{labels.switchNetwork ?? "Switching network…"}</p>
-    );
+    return <LoadingStatus text={labels.switchNetwork ?? "Switching network..."} />;
   }
 
   if (s.type === "wallet_sending") {
     return (
       <>
         <p className="kp-muted">
-          {labels.sendPayment ?? "Confirm the payment in your wallet…"}
+          {labels.sendPayment ?? "Confirm the payment in your wallet..."}
         </p>
         <div className="kp-row" style={{ marginTop: 10 }}>
           <div>From</div>
@@ -337,9 +382,9 @@ function RenderBody(props: {
             {s.txHash}
           </div>
         </div>
-        <p className="kp-muted" style={{ marginTop: 8 }}>
-          Waiting for confirmations…
-        </p>
+        <div style={{ marginTop: 8 }}>
+          <LoadingStatus text="Waiting for confirmations..." />
+        </div>
       </>
     );
   }
@@ -373,7 +418,7 @@ function RenderBody(props: {
         </div>
 
         <p className="kp-muted" style={{ marginTop: 12 }}>
-          We’ll update automatically once payment is detected.
+          We'll update automatically once payment is detected.
         </p>
       </>
     );
@@ -382,17 +427,17 @@ function RenderBody(props: {
   if (s.type === "waiting") {
     const statusText =
       s.intent.status === "requires_payment"
-        ? "Waiting for payment…"
+        ? "Waiting for payment..."
         : s.intent.status === "pending_confirmations"
-          ? "Payment detected, awaiting confirmations…"
-          : "Updating…";
+          ? "Payment detected, awaiting confirmations..."
+          : "Updating...";
 
     return (
       <>
-        <p className="kp-muted">{statusText}</p>
+        <LoadingStatus text={statusText} />
         <div className="kp-row">
           <div>Status</div>
-          <div>{s.intent.status}</div>
+          <div>{formatStatusLabel(s.intent.status)}</div>
         </div>
       </>
     );
@@ -420,7 +465,10 @@ function RenderBody(props: {
           {labels.successTitle ?? "Payment successful"}
         </div>
         <p className="kp-muted" style={{ marginTop: 8 }}>
-          {labels.successBody ?? "You can close this window."}
+          {labels.successBody ?? "This window will close automatically."}
+        </p>
+        <p className="kp-muted" style={{ marginTop: 8 }}>
+          Closing in {props.successSecondsLeft ?? SUCCESS_AUTO_CLOSE_SECONDS}s...
         </p>
       </>
     );
@@ -537,6 +585,32 @@ function Tab(props: {
   );
 }
 
+function LoadingStatus(props: { text: string }) {
+  return (
+    <div className="kp-statusRow" role="status" aria-live="polite">
+      <span className="kp-spinner" aria-hidden="true" />
+      <p className="kp-muted" style={{ margin: 0 }}>
+        {props.text}
+      </p>
+    </div>
+  );
+}
+
+function formatStatusLabel(status: string): string {
+  switch (status) {
+    case "requires_payment":
+      return "Awaiting payment";
+    case "pending_confirmations":
+      return "Awaiting confirmations";
+    case "succeeded":
+      return "Succeeded";
+    case "expired":
+      return "Expired";
+    default:
+      return status;
+  }
+}
+
 /**
  * Extract mode from any CheckoutState that contains an `intent`.
  * Keeping this in the renderer avoids adding UI concepts to the controller.
@@ -562,5 +636,5 @@ function formatAmount(amountUnits: number, decimals: number) {
 function shortAddr(addr: string) {
   if (!addr) return "";
   if (addr.length <= 12) return addr;
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
