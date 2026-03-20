@@ -25,16 +25,4 @@ export default defineConfig([
     outDir: "dist/react",
     external: ["react", "react-dom"],
   },
-
-  // Server entry: @kryptopay/sdk/server
-  {
-    entry: ["src/server/index.ts"],
-    format: ["esm", "cjs"],
-    dts: true,
-    sourcemap: true,
-    clean: false,
-    treeshake: true,
-    outDir: "dist/server",
-    platform: "node",
-  },
 ]);

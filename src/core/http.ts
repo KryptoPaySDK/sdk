@@ -2,12 +2,42 @@ import { KryptoPayError } from "./errors";
 import type { ResolvedPaymentIntent } from "./types";
 
 export type HttpClientOptions = {
-  baseUrl?: string; // e.g. https://api.kryptopay.xyz
+  baseUrl?: string; // internal override for tests/dev
   fetchImpl?: typeof fetch; // injection for tests
   signal?: AbortSignal;
 };
 
-export const DEFAULT_BASE_URL = "http://localhost:3000";
+export const DEFAULT_BASE_URL = "https://api.kryptopay.xyz";
+
+const INTERNAL_API_BASE_URL_OVERRIDE_KEY =
+  "__KRYPTOPAY_INTERNAL_API_BASE_URL_OVERRIDE__";
+
+function normalizeBaseUrl(baseUrl: string): string {
+  return baseUrl.trim().replace(/\/+$/, "");
+}
+
+function getInternalBaseUrlOverride(): string | undefined {
+  const value = (globalThis as Record<string, unknown>)[
+    INTERNAL_API_BASE_URL_OVERRIDE_KEY
+  ];
+
+  if (typeof value !== "string" || !value.trim()) {
+    return undefined;
+  }
+
+  return normalizeBaseUrl(value);
+}
+
+export function setInternalApiBaseUrlOverride(baseUrl?: string) {
+  const target = globalThis as Record<string, unknown>;
+
+  if (!baseUrl || !baseUrl.trim()) {
+    delete target[INTERNAL_API_BASE_URL_OVERRIDE_KEY];
+    return;
+  }
+
+  target[INTERNAL_API_BASE_URL_OVERRIDE_KEY] = normalizeBaseUrl(baseUrl);
+}
 
 /**
  * Parse JSON safely (some error responses might be empty or non-JSON).
@@ -40,7 +70,8 @@ export async function resolveIntent(
   clientSecret: string,
   opts: HttpClientOptions = {},
 ): Promise<ResolvedPaymentIntent> {
-  const baseUrl = opts.baseUrl ?? DEFAULT_BASE_URL;
+  const baseUrl =
+    opts.baseUrl ?? getInternalBaseUrlOverride() ?? DEFAULT_BASE_URL;
   const fetchFn = opts.fetchImpl ?? fetch;
 
   let res: Response;

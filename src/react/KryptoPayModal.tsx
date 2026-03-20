@@ -12,7 +12,6 @@ export type KryptoPayModalProps = Omit<
 > & {
   open: boolean;
   clientSecret: string;
-  baseUrl?: string;
   fetchImpl?: typeof fetch; // injection for Cosmos/tests
 };
 
@@ -69,7 +68,6 @@ export function KryptoPayModal(props: KryptoPayModalProps) {
   const controller = useMemo(() => {
     return new CheckoutController({
       clientSecret: props.clientSecret,
-      baseUrl: props.baseUrl,
       fetchImpl: props.fetchImpl,
 
       defaultMethod: props.defaultMethod,
@@ -84,7 +82,6 @@ export function KryptoPayModal(props: KryptoPayModalProps) {
     });
   }, [
     props.clientSecret,
-    props.baseUrl,
     props.fetchImpl,
     props.defaultMethod,
     props.allowManual,

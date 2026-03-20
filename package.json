@@ -1,12 +1,25 @@
 {
   "name": "@kryptopay/sdk",
   "version": "0.0.1",
+  "description": "TypeScript SDK for launching KryptoPay checkout in web apps.",
+  "license": "UNLICENSED",
   "private": false,
   "type": "module",
   "sideEffects": false,
+  "keywords": [
+    "kryptopay",
+    "payments",
+    "checkout",
+    "crypto",
+    "react",
+    "sdk"
+  ],
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -20,11 +33,6 @@
       "types": "./dist/react/index.d.ts",
       "import": "./dist/react/index.js",
       "require": "./dist/react/index.cjs"
-    },
-    "./server": {
-      "types": "./dist/server/index.d.ts",
-      "import": "./dist/server/index.js",
-      "require": "./dist/server/index.cjs"
     }
   },
   "scripts": {

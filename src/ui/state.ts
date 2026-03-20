@@ -73,7 +73,6 @@ export type ControllerConfig = Pick<
   | "onAwaitingConfirmation"
   | "onError"
 > & {
-  baseUrl?: string; // allow overriding API URL from UI wrappers
   fetchImpl?: typeof fetch;
 };
 

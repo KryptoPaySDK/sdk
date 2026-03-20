@@ -27,7 +27,6 @@ export type KryptoPayModalHandle = {
  */
 export function openKryptoPayModal(
   opts: KryptoPayCheckoutOptions & {
-    baseUrl?: string;
     fetchImpl?: typeof fetch;
   },
 ): KryptoPayModalHandle {
@@ -50,7 +49,6 @@ export function openKryptoPayModal(
 
   const controller = new CheckoutController({
     clientSecret: opts.clientSecret,
-    baseUrl: opts.baseUrl,
     fetchImpl: opts.fetchImpl,
 
     defaultMethod: opts.defaultMethod,

@@ -103,7 +103,6 @@ export class CheckoutController {
 
     try {
       const intent = await resolveIntent(this.config.clientSecret, {
-        baseUrl: this.config.baseUrl,
         fetchImpl: this.config.fetchImpl,
       });
 
@@ -358,7 +357,6 @@ export class CheckoutController {
 
     try {
       const result = await waitForFinalStatus(this.config.clientSecret, {
-        baseUrl: this.config.baseUrl,
         fetchImpl: this.config.fetchImpl,
         signal: pollAbort.signal,
         intervalMs: this.pollIntervalMs,

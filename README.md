@@ -30,6 +30,8 @@ React users must have peer dependencies installed:
 3. Frontend opens KryptoPay modal with that `clientSecret`.
 4. SDK resolves and tracks payment status until completion.
 
+The browser SDK talks to the hosted KryptoPay API at `https://api.kryptopay.xyz`. That endpoint is not configurable through the public modal API.
+
 Security note: do not expose merchant API keys in production browser code. Create intents from your backend.
 
 ## Quick Start (Vanilla)
@@ -39,7 +41,6 @@ import { openKryptoPayModal } from "@kryptopay/sdk";
 
 const modal = openKryptoPayModal({
   clientSecret,
-  baseUrl: "https://api.kryptopay.example",
   merchantName: "Acme Store",
   defaultMethod: "wallet",
   allowWallet: true,
@@ -76,7 +77,6 @@ export function Checkout({ clientSecret }: { clientSecret: string }) {
       <KryptoPayModal
         open={open}
         clientSecret={clientSecret}
-        baseUrl="https://api.kryptopay.example"
         merchantName="Acme Store"
         onClose={() => setOpen(false)}
         onSuccess={(event) => {
@@ -109,7 +109,6 @@ Opens the checkout modal immediately and returns a handle:
 
 Common `options` fields:
 - `clientSecret: string` (required)
-- `baseUrl?: string`
 - `defaultMethod?: "wallet" | "manual"`
 - `allowWallet?: boolean`
 - `allowManual?: boolean`
@@ -130,7 +129,6 @@ For the complete type surface, import `KryptoPayCheckoutOptions`.
 Props are the same checkout options plus:
 - `open: boolean`
 - `clientSecret: string`
-- `baseUrl?: string`
 - `fetchImpl?: typeof fetch`
 
 The component is controlled by `open`; set `open` to `false` on `onClose` to keep UI state in sync.
@@ -179,7 +177,7 @@ openKryptoPayModal({
 
 - Modal does not open:
   - Ensure a valid `clientSecret` was created from your backend.
-  - Ensure `baseUrl` points to your KryptoPay API.
+  - Ensure the intent was created for the same KryptoPay environment you expect to use.
 - React modal never closes:
   - Handle `onClose` and set your `open` state to `false`.
 - CORS or network errors:
@@ -188,4 +186,3 @@ openKryptoPayModal({
 ## Notes
 
 - Browser checkout APIs are intended for frontend environments.
-- `@kryptopay/sdk/server` is reserved for server-side helpers and is not implemented yet.
