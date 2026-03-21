@@ -1,9 +1,17 @@
 {
   "name": "@kryptopay/sdk",
-  "version": "0.0.1",
+  "version": "0.1.0-beta.1",
   "description": "TypeScript SDK for launching KryptoPay checkout in web apps.",
   "license": "UNLICENSED",
   "private": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KryptoPaySDK/sdk.git"
+  },
+  "homepage": "https://kryptopay.xyz",
+  "bugs": {
+    "url": "https://github.com/KryptoPaySDK/sdk/issues"
+  },
   "type": "module",
   "sideEffects": false,
   "keywords": [
