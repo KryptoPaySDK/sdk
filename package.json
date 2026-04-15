@@ -1,6 +1,6 @@
 {
   "name": "@kryptopay/sdk",
-  "version": "0.1.0-beta.2",
+  "version": "0.1.0-beta.3",
   "description": "TypeScript SDK for launching KryptoPay checkout in web apps.",
   "license": "UNLICENSED",
   "private": false,
@@ -48,7 +48,11 @@
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "format": "prettier -w ."
+    "format": "prettier -w .",
+    "prepublishOnly": "npm run lint && npm run typecheck && npm run build",
+    "publish": "npm publish --access public --tag latest",
+    "publish:beta": "npm publish --access public --tag beta",
+    "publish:next": "npm publish --access public --tag next"
   },
   "peerDependencies": {
     "react": ">=18",
