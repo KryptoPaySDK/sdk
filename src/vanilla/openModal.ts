@@ -64,8 +64,15 @@ export function openKryptoPayModal(
 
   // Backdrop click closes the modal.
   overlay.addEventListener("mousedown", (e) => {
-    if (e.target === overlay) controller.close();
+    if (e.target === overlay) controller.close("backdrop");
   });
+
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      controller.close("escape_key");
+    }
+  };
+  window.addEventListener("keydown", onKeyDown);
 
   // Mount once.
   document.body.appendChild(overlay);
@@ -94,9 +101,10 @@ export function openKryptoPayModal(
       render(modal, controller.getState(), opts, controller, successSecondsLeft);
     }, 1000);
 
-    successTimeoutId = window.setTimeout(() => {
-      controller.close();
-    }, SUCCESS_AUTO_CLOSE_SECONDS * 1000);
+    successTimeoutId = window.setTimeout(
+      () => controller.close("success_auto_close"),
+      SUCCESS_AUTO_CLOSE_SECONDS * 1000,
+    );
   };
 
   // `subscribe` may synchronously emit the current state, so initialize first.
@@ -115,6 +123,7 @@ export function openKryptoPayModal(
     if (state.type === "idle" && hasStarted) {
       clearSuccessTimers();
       unsubscribe?.();
+      window.removeEventListener("keydown", onKeyDown);
       overlay.remove();
     }
   });
@@ -124,7 +133,7 @@ export function openKryptoPayModal(
   void controller.open();
 
   return {
-    close: () => controller.close(),
+    close: () => controller.close("programmatic"),
     getState: () => controller.getState(),
   };
 }
@@ -139,7 +148,10 @@ function render(
   modal.innerHTML = "";
   modal.appendChild(renderHeader(state, opts, controller));
   modal.appendChild(renderBody(state, opts, controller, successSecondsLeft));
-  modal.appendChild(renderFooter(state, opts, controller));
+  const footer = renderFooter(state, opts, controller);
+  if (footer) {
+    modal.appendChild(footer);
+  }
 }
 
 function renderHeader(
@@ -200,9 +212,31 @@ function renderHeader(
   left.appendChild(textWrap);
 
   const closeBtn = document.createElement("button");
-  closeBtn.className = `kp-btn ${opts.classNames?.secondaryButton ?? ""}`;
-  closeBtn.textContent = opts.labels?.close ?? "Close";
-  closeBtn.onclick = () => controller.close();
+  closeBtn.type = "button";
+  closeBtn.className = `kp-iconBtn ${opts.classNames?.secondaryButton ?? ""} ${opts.classNames?.closeButton ?? ""}`;
+  closeBtn.setAttribute("aria-label", opts.labels?.close ?? "Close");
+  closeBtn.onclick = () => controller.close("close_button");
+
+  const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  icon.setAttribute("viewBox", "0 0 12 12");
+  icon.setAttribute("aria-hidden", "true");
+  icon.setAttribute("focusable", "false");
+
+  const lineA = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  lineA.setAttribute("d", "M2 2l8 8");
+  lineA.setAttribute("stroke", "currentColor");
+  lineA.setAttribute("stroke-width", "1.5");
+  lineA.setAttribute("stroke-linecap", "round");
+
+  const lineB = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  lineB.setAttribute("d", "M10 2L2 10");
+  lineB.setAttribute("stroke", "currentColor");
+  lineB.setAttribute("stroke-width", "1.5");
+  lineB.setAttribute("stroke-linecap", "round");
+
+  icon.appendChild(lineA);
+  icon.appendChild(lineB);
+  closeBtn.appendChild(icon);
 
   header.appendChild(left);
   header.appendChild(closeBtn);
@@ -411,7 +445,7 @@ function renderFooter(
   state: CheckoutState,
   opts: KryptoPayCheckoutOptions,
   controller: CheckoutController,
-) {
+): HTMLElement | null {
   const footer = document.createElement("div");
   footer.className = `kp-footer ${opts.classNames?.footer ?? ""}`;
 
@@ -425,23 +459,12 @@ function renderFooter(
     return btn;
   };
 
-  const secondary = (text: string, onClick: () => void) => {
-    const btn = document.createElement("button");
-    btn.className = `kp-btn ${opts.classNames?.secondaryButton ?? ""}`;
-    btn.textContent = text;
-    btn.onclick = onClick;
-    return btn;
-  };
-
   if (state.type === "choose_method") {
     footer.appendChild(primary("Continue", () => void controller.continue()));
     return footer;
   }
 
   if (state.type === "awaiting_confirmation") {
-    footer.appendChild(
-      secondary(labels.close ?? "Close", () => controller.close()),
-    );
     footer.appendChild(
       primary(
         labels.keepWaiting ?? "Keep waiting",
@@ -457,13 +480,13 @@ function renderFooter(
     state.type === "error"
   ) {
     footer.appendChild(
-      primary(labels.close ?? "Close", () => controller.close()),
+      primary(labels.close ?? "Close", () => controller.close("close_button")),
     );
     return footer;
   }
 
   // In-progress states: no footer buttons (close is always in header).
-  return footer;
+  return null;
 }
 
 function renderRow(left: string, right: string) {

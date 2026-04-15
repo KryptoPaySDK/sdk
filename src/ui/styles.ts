@@ -85,6 +85,27 @@ const CSS = `
   border-color: var(--kp-color-brand);
   color: white;
 }
+.kp-iconBtn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--kp-color-border);
+  cursor: pointer;
+  background: transparent;
+  color: var(--kp-color-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+.kp-iconBtn svg {
+  width: 12px;
+  height: 12px;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  fill: none;
+}
 .kp-code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   border: 1px solid var(--kp-color-border);

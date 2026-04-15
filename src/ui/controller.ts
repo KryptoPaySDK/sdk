@@ -1,6 +1,7 @@
 import { resolveIntent } from "../core/http";
 import { waitForFinalStatus } from "../core/polling";
 import type { ResolvedPaymentIntent } from "../core/types";
+import type { KryptoPayCloseEvent, KryptoPayCloseReason } from "../core/types";
 import type { ControllerConfig, CheckoutState, PaymentMethod } from "./state";
 import { toPublicError } from "./state";
 
@@ -125,8 +126,8 @@ export class CheckoutController {
    * - calls onClose
    * - returns to idle
    */
-  close() {
-    this.stopAndReset({ emitOnClose: true });
+  close(reason: KryptoPayCloseReason = "programmatic") {
+    this.stopAndReset({ emitOnClose: true, closeReason: reason });
   }
 
   /**
@@ -139,17 +140,69 @@ export class CheckoutController {
     this.stopAndReset({ emitOnClose: false });
   }
 
-  private stopAndReset(opts: { emitOnClose: boolean }) {
+  private stopAndReset(opts: {
+    emitOnClose: boolean;
+    closeReason?: KryptoPayCloseReason;
+  }) {
+    if (this.state.type === "idle" && !this.activePollAbort) {
+      return;
+    }
+
+    const closeEvent =
+      opts.emitOnClose && opts.closeReason
+        ? this.getCloseEvent(opts.closeReason)
+        : null;
+
     this.stopRequested = true;
     this.isRunning = false;
     this.cancelActivePolling();
 
-    if (opts.emitOnClose) {
-      this.config.onClose?.();
+    if (closeEvent) {
+      this.config.onClose?.(closeEvent);
     }
 
     if (this.state.type !== "idle") {
       this.setState({ type: "idle" });
+    }
+  }
+
+  private getCloseEvent(reason: KryptoPayCloseReason): KryptoPayCloseEvent {
+    const intent = this.getIntentFromState(this.state);
+    const txHash =
+      this.state.type === "wallet_submitted" ? this.state.txHash : this.lastTxHash;
+
+    return {
+      reason,
+      checkout_state: this.state.type,
+      completed:
+        this.state.type === "success" || intent?.status === "succeeded",
+      payment_intent_id: intent?.id,
+      payment_status: intent?.status,
+      tx_hash: txHash ?? undefined,
+      chain: intent?.chain,
+      mode: intent?.mode,
+    };
+  }
+
+  private getIntentFromState(
+    state: CheckoutState,
+  ): ResolvedPaymentIntent | undefined {
+    switch (state.type) {
+      case "choose_method":
+      case "manual_instructions":
+      case "waiting":
+      case "awaiting_confirmation":
+      case "success":
+      case "expired":
+      case "wallet_connecting":
+      case "wallet_switching_chain":
+      case "wallet_sending":
+      case "wallet_submitted":
+        return state.intent;
+      case "error":
+        return state.lastIntent;
+      default:
+        return undefined;
     }
   }
 

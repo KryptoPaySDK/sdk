@@ -51,8 +51,8 @@ const modal = openKryptoPayModal({
   onError: (err) => {
     console.error(err.code, err.message, err.recoverable);
   },
-  onClose: () => {
-    console.log("checkout closed");
+  onClose: (event) => {
+    console.log("checkout closed", event.reason, event.payment_status);
   },
 });
 
@@ -78,7 +78,10 @@ export function Checkout({ clientSecret }: { clientSecret: string }) {
         open={open}
         clientSecret={clientSecret}
         merchantName="Acme Store"
-        onClose={() => setOpen(false)}
+        onClose={(event) => {
+          console.log("checkout closed", event.reason, event.payment_status);
+          setOpen(false);
+        }}
         onSuccess={(event) => {
           console.log("paid", event.payment_intent_id, event.tx_hash);
         }}
@@ -117,7 +120,7 @@ Common `options` fields:
 - `theme?: KryptoPayTheme`
 - `classNames?: KryptoPayClassNames`
 - `labels?: KryptoPayLabels`
-- `onClose?: () => void`
+- `onClose?: (event) => void`
 - `onSuccess?: (event) => void`
 - `onAwaitingConfirmation?: (event) => void`
 - `onError?: (error) => void`
@@ -143,10 +146,30 @@ The component is controlled by `open`; set `open` to `false` on `onClose` to kee
 `onAwaitingConfirmation` receives:
 - `payment_intent_id: string`
 
+`onClose` receives:
+- `reason: "close_button" | "backdrop" | "escape_key" | "programmatic" | "success_auto_close"`
+- `checkout_state: string`
+- `completed: boolean`
+- `payment_intent_id?: string`
+- `payment_status?: "requires_payment" | "pending_confirmations" | "succeeded" | "expired"`
+- `tx_hash?: string`
+- `chain?: string`
+- `mode?: "testnet" | "mainnet"`
+
 `onError` receives:
 - `code: string`
 - `message: string`
 - `recoverable: boolean`
+
+## Close Semantics
+
+Closing the modal dismisses the SDK UI and stops polling. It does not cancel the underlying payment intent on the server.
+
+- If the modal closes before payment is detected, the intent typically remains `requires_payment` until it is paid or expires.
+- If the modal closes after a transfer is submitted or while confirmations are pending, the backend may still move the intent to `pending_confirmations` and later `succeeded`.
+- If the modal auto-closes after success, `onClose` is emitted with `reason: "success_auto_close"` and `completed: true`.
+
+If you need server-side cancellation, that should be implemented as a separate merchant/backend action rather than inferred from dismissing the modal.
 
 ## Customization
 
@@ -179,6 +202,8 @@ openKryptoPayModal({
   - Ensure the intent was created for the same KryptoPay environment you expect to use.
 - React modal never closes:
   - Handle `onClose` and set your `open` state to `false`.
+- Why does a closed unpaid checkout still show `requires_payment`?
+  - Because dismissing the modal does not cancel the payment intent; use the `onClose` event payload to decide whether to reopen the same intent, create a new one later, or mark the checkout as abandoned in your app.
 - CORS or network errors:
   - Confirm your API allows the frontend origin and correct auth flow.
 

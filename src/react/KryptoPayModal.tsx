@@ -75,7 +75,7 @@ export function KryptoPayModal(props: KryptoPayModalProps) {
       allowWallet: props.allowWallet,
 
       // Stable wrappers call the most recent callbacks.
-      onClose: () => onCloseRef.current?.(),
+      onClose: (e) => onCloseRef.current?.(e),
       onSuccess: (e) => onSuccessRef.current?.(e),
       onAwaitingConfirmation: (e) => onAwaitingRef.current?.(e),
       onError: (e) => onErrorRef.current?.(e),
@@ -107,7 +107,7 @@ export function KryptoPayModal(props: KryptoPayModalProps) {
     if (!prevOpen && props.open) {
       void controller.open();
     } else if (prevOpen && !props.open) {
-      controller.close();
+      controller.dispose();
     } else if (prevOpen && props.open) {
       // Controller can be recreated while open (e.g. new clientSecret); open the new instance.
       void controller.open();
@@ -151,7 +151,7 @@ export function KryptoPayModal(props: KryptoPayModalProps) {
     }, 1000);
 
     successTimeoutRef.current = window.setTimeout(() => {
-      controller.close();
+      controller.close("success_auto_close");
     }, SUCCESS_AUTO_CLOSE_SECONDS * 1000);
 
     return () => {
@@ -159,7 +159,20 @@ export function KryptoPayModal(props: KryptoPayModalProps) {
     };
   }, [state.type, controller]);
 
-  if (!props.open) return null;
+  useEffect(() => {
+    if (!props.open || state.type === "idle") return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        controller.close("escape_key");
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [props.open, state.type, controller]);
+
+  if (!props.open || state.type === "idle") return null;
 
   return (
     <Overlay
@@ -174,7 +187,7 @@ export function KryptoPayModal(props: KryptoPayModalProps) {
       zIndex={props.zIndex}
       size={props.size}
       successSecondsLeft={successSecondsLeft}
-      onBackdropClick={() => controller.close()}
+      onBackdropClick={() => controller.close("backdrop")}
     />
   );
 }
@@ -209,6 +222,12 @@ function Overlay(props: {
   const cn = props.classNames ?? {};
   const labels = props.labels ?? {};
   const mode = getIntentModeFromState(props.state);
+  const footer = renderFooter({
+    state: props.state,
+    controller: props.controller,
+    labels,
+    classNames: cn,
+  });
 
   return (
     <div
@@ -255,13 +274,11 @@ function Overlay(props: {
             </div>
           </div>
 
-          <button
-            className={`kp-btn ${cn.secondaryButton ?? ""}`}
-            onClick={() => props.controller.close()}
-            type="button"
-          >
-            {labels.close ?? "Close"}
-          </button>
+          <CloseIconButton
+            ariaLabel={labels.close ?? "Close"}
+            className={`${cn.secondaryButton ?? ""} ${cn.closeButton ?? ""}`}
+            onClick={() => props.controller.close("close_button")}
+          />
         </div>
 
         <div className={`kp-body ${cn.body ?? ""}`}>
@@ -274,14 +291,7 @@ function Overlay(props: {
           />
         </div>
 
-        <div className={`kp-footer ${cn.footer ?? ""}`}>
-          <RenderFooter
-            state={props.state}
-            controller={props.controller}
-            labels={labels}
-            classNames={cn}
-          />
-        </div>
+        {footer ? <div className={`kp-footer ${cn.footer ?? ""}`}>{footer}</div> : null}
       </div>
     </div>
   );
@@ -505,7 +515,7 @@ function RenderBody(props: {
   return null;
 }
 
-function RenderFooter(props: {
+function renderFooter(props: {
   state: CheckoutState;
   controller: CheckoutController;
   labels: NonNullable<KryptoPayCheckoutOptions["labels"]>;
@@ -529,22 +539,13 @@ function RenderFooter(props: {
 
   if (s.type === "awaiting_confirmation") {
     return (
-      <>
-        <button
-          className={`kp-btn ${cn.secondaryButton ?? ""}`}
-          onClick={() => props.controller.close()}
-          type="button"
-        >
-          {labels.close ?? "Close"}
-        </button>
-        <button
-          className={`kp-btn kp-btn-primary ${cn.primaryButton ?? ""}`}
-          onClick={() => void props.controller.keepWaiting()}
-          type="button"
-        >
-          {labels.keepWaiting ?? "Keep waiting"}
-        </button>
-      </>
+      <button
+        className={`kp-btn kp-btn-primary ${cn.primaryButton ?? ""}`}
+        onClick={() => void props.controller.keepWaiting()}
+        type="button"
+      >
+        {labels.keepWaiting ?? "Keep waiting"}
+      </button>
     );
   }
 
@@ -552,7 +553,7 @@ function RenderFooter(props: {
     return (
       <button
         className={`kp-btn kp-btn-primary ${cn.primaryButton ?? ""}`}
-        onClick={() => props.controller.close()}
+        onClick={() => props.controller.close("close_button")}
         type="button"
       >
         {labels.close ?? "Close"}
@@ -562,6 +563,26 @@ function RenderFooter(props: {
 
   // In-progress states: no footer buttons (close is always available in header).
   return null;
+}
+
+function CloseIconButton(props: {
+  ariaLabel: string;
+  className?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      aria-label={props.ariaLabel}
+      className={`kp-iconBtn ${props.className ?? ""}`}
+      onClick={props.onClick}
+      type="button"
+    >
+      <svg aria-hidden="true" focusable="false" viewBox="0 0 12 12">
+        <path d="M2 2l8 8" />
+        <path d="M10 2L2 10" />
+      </svg>
+    </button>
+  );
 }
 
 function Tab(props: {

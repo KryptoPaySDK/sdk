@@ -20,6 +20,7 @@ export type KryptoPayClassNames = Partial<{
   header: string;
   body: string;
   footer: string;
+  closeButton: string;
   tabs: string;
   tab: string;
   primaryButton: string;
@@ -44,6 +45,24 @@ export type KryptoPayLabels = Partial<{
   successBody: string;
 }>;
 
+export type KryptoPayCloseReason =
+  | "close_button"
+  | "backdrop"
+  | "escape_key"
+  | "programmatic"
+  | "success_auto_close";
+
+export type KryptoPayCloseEvent = {
+  reason: KryptoPayCloseReason;
+  checkout_state: string;
+  completed: boolean;
+  payment_intent_id?: string;
+  payment_status?: PaymentIntentStatus;
+  tx_hash?: string;
+  chain?: string;
+  mode?: Mode;
+};
+
 export type KryptoPayCheckoutOptions = {
   clientSecret: string;
 
@@ -61,7 +80,7 @@ export type KryptoPayCheckoutOptions = {
   logoUrl?: string;
   labels?: KryptoPayLabels;
 
-  onClose?: () => void;
+  onClose?: (event: KryptoPayCloseEvent) => void;
   onSuccess?: (event: {
     payment_intent_id: string;
     tx_hash: string;
