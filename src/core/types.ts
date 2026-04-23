@@ -78,6 +78,7 @@ export type KryptoPayCheckoutOptions = {
 
   merchantName?: string;
   logoUrl?: string;
+  mismatchInfo?: string;
   labels?: KryptoPayLabels;
 
   onClose?: (event: KryptoPayCloseEvent) => void;
@@ -99,12 +100,14 @@ export type KryptoPayCheckoutOptions = {
  * These statuses are backed by your DB enum `payment_status`:
  * - requires_payment
  * - pending_confirmations
+ * - review_required
  * - succeeded
  * - expired
  */
 export type PaymentIntentStatus =
   | "requires_payment"
   | "pending_confirmations"
+  | "review_required"
   | "succeeded"
   | "expired";
 
@@ -144,4 +147,9 @@ export type ResolvedPaymentIntent = {
   lane: Lane;
 
   metadata: Record<string, unknown>;
+  tx_hash?: string | null;
+  paid_amount_units?: number | null;
+  mismatch_reason?: "underpaid" | "overpaid" | null;
+  mismatch_tx_hash?: string | null;
+  mismatch_recorded_at?: string | null;
 };

@@ -193,6 +193,7 @@ export class CheckoutController {
       case "waiting":
       case "awaiting_confirmation":
       case "success":
+      case "review_required":
       case "expired":
       case "wallet_connecting":
       case "wallet_switching_chain":
@@ -377,7 +378,7 @@ export class CheckoutController {
    * startPolling()
    * - resolves intent repeatedly
    * - updates intermediate UI states
-   * - ends on succeeded / expired
+   * - ends on succeeded / review_required / expired
    */
   private async startPolling(
     initialIntent: ResolvedPaymentIntent,
@@ -457,6 +458,11 @@ export class CheckoutController {
             return;
           }
 
+          if (intent.status === "review_required") {
+            this.setState({ type: "review_required", intent });
+            return;
+          }
+
           this.setState({
             type: "waiting",
             intent,
@@ -480,6 +486,11 @@ export class CheckoutController {
         });
 
         this.setState({ type: "success", intent: finalIntent });
+        return;
+      }
+
+      if (finalIntent.status === "review_required") {
+        this.setState({ type: "review_required", intent: finalIntent });
         return;
       }
 

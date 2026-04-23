@@ -113,6 +113,38 @@ const CSS = `
   padding: 10px;
   overflow-x: auto;
 }
+.kp-panel {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: var(--kp-radius-sm);
+  border: 1px solid var(--kp-color-border);
+  background: rgba(255,255,255,0.03);
+}
+.kp-panel[data-variant="warning"] {
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.10);
+}
+.kp-panel[data-variant="danger"] {
+  border-color: rgba(239, 68, 68, 0.42);
+  background: rgba(239, 68, 68, 0.08);
+}
+.kp-panelTitle {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.kp-panelTitle[data-tone="warning"] {
+  color: #fbbf24;
+}
+.kp-panelTitle[data-tone="danger"] {
+  color: var(--kp-color-danger);
+}
+.kp-rowLabel {
+  color: var(--kp-color-muted-text);
+}
+.kp-rowValue {
+  font-weight: 600;
+  text-align: right;
+}
 
 .kp-badge {
   font-size: 12px;

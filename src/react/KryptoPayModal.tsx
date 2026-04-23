@@ -180,6 +180,7 @@ export function KryptoPayModal(props: KryptoPayModalProps) {
       controller={controller}
       merchantName={props.merchantName}
       logoUrl={props.logoUrl}
+      mismatchInfo={props.mismatchInfo}
       labels={props.labels}
       classNames={props.classNames}
       theme={props.theme}
@@ -197,6 +198,7 @@ function Overlay(props: {
   controller: CheckoutController;
   merchantName?: string;
   logoUrl?: string;
+  mismatchInfo?: string;
   labels?: KryptoPayCheckoutOptions["labels"];
   classNames?: KryptoPayCheckoutOptions["classNames"];
   theme?: KryptoPayCheckoutOptions["theme"];
@@ -287,6 +289,7 @@ function Overlay(props: {
             controller={props.controller}
             labels={labels}
             classNames={cn}
+            mismatchInfo={props.mismatchInfo}
             successSecondsLeft={props.successSecondsLeft}
           />
         </div>
@@ -302,6 +305,7 @@ function RenderBody(props: {
   controller: CheckoutController;
   labels: NonNullable<KryptoPayCheckoutOptions["labels"]>;
   classNames: NonNullable<KryptoPayCheckoutOptions["classNames"]>;
+  mismatchInfo?: string;
   successSecondsLeft: number | null;
 }) {
   const s = props.state;
@@ -424,6 +428,13 @@ function RenderBody(props: {
           </div>
         </div>
 
+        <Panel title="Important" tone="warning" style={{ marginTop: 12 }}>
+          <p className="kp-muted" style={{ margin: 0 }}>
+            Send the exact amount shown above. Sending less or more can delay
+            confirmation and may require manual review.
+          </p>
+        </Panel>
+
         <p className="kp-muted" style={{ marginTop: 12 }}>
           We'll update automatically once payment is detected.
         </p>
@@ -476,6 +487,58 @@ function RenderBody(props: {
         </p>
         <p className="kp-muted" style={{ marginTop: 8 }}>
           Closing in {props.successSecondsLeft ?? SUCCESS_AUTO_CLOSE_SECONDS}s...
+        </p>
+      </>
+    );
+  }
+
+  if (s.type === "review_required") {
+    return (
+      <>
+        <div className="kp-title kp-danger">Payment mismatch</div>
+        <p className="kp-muted" style={{ marginTop: 8 }}>
+          We detected a payment, but the amount sent was{" "}
+          {formatMismatchReason(s.intent.mismatch_reason)}. This payment needs
+          manual review.
+        </p>
+        <Panel title="Mismatch details" tone="danger" style={{ marginTop: 12 }}>
+          <DetailPair
+            label="Expected amount"
+            value={`${formatAmount(s.intent.amount_units, s.intent.decimals)} ${s.intent.token_symbol}`}
+          />
+          <DetailPair
+            label="Amount sent"
+            value={
+              typeof s.intent.paid_amount_units === "number"
+                ? `${formatAmount(s.intent.paid_amount_units, s.intent.decimals)} ${s.intent.token_symbol}`
+                : "Not available"
+            }
+          />
+          <DetailPair
+            label="Reason"
+            value={formatMismatchLabel(s.intent.mismatch_reason)}
+          />
+        </Panel>
+        {s.intent.mismatch_tx_hash ? (
+          <div className="kp-row" style={{ marginTop: 10 }}>
+            <div>Tx Hash</div>
+            <div
+              className="kp-muted"
+              style={{ overflow: "hidden", textOverflow: "ellipsis" }}
+            >
+              {s.intent.mismatch_tx_hash}
+            </div>
+          </div>
+        ) : null}
+        {props.mismatchInfo ? (
+          <Panel title="Information" tone="warning" style={{ marginTop: 12 }}>
+            <p className="kp-muted" style={{ margin: 0 }}>
+              {props.mismatchInfo}
+            </p>
+          </Panel>
+        ) : null}
+        <p className="kp-muted" style={{ marginTop: 8 }}>
+          Please contact the merchant to resolve this payment manually.
         </p>
       </>
     );
@@ -549,7 +612,12 @@ function renderFooter(props: {
     );
   }
 
-  if (s.type === "success" || s.type === "expired" || s.type === "error") {
+  if (
+    s.type === "success" ||
+    s.type === "review_required" ||
+    s.type === "expired" ||
+    s.type === "error"
+  ) {
     return (
       <button
         className={`kp-btn kp-btn-primary ${cn.primaryButton ?? ""}`}
@@ -622,6 +690,8 @@ function formatStatusLabel(status: string): string {
       return "Awaiting confirmations";
     case "succeeded":
       return "Succeeded";
+    case "review_required":
+      return "Review required";
     case "expired":
       return "Expired";
     default:
@@ -649,6 +719,43 @@ function formatAmount(amountUnits: number, decimals: number) {
   const whole = s.slice(0, -decimals);
   const frac = s.slice(-decimals).replace(/0+$/, "");
   return frac ? `${whole}.${frac}` : whole;
+}
+
+function formatMismatchReason(reason?: "underpaid" | "overpaid" | null) {
+  if (reason === "underpaid") return "lower than expected";
+  if (reason === "overpaid") return "higher than expected";
+  return "different from the expected amount";
+}
+
+function formatMismatchLabel(reason?: "underpaid" | "overpaid" | null) {
+  if (reason === "underpaid") return "Amount sent was lower than expected";
+  if (reason === "overpaid") return "Amount sent was higher than expected";
+  return "Amount sent did not match the expected amount";
+}
+
+function Panel(props: {
+  title: string;
+  tone: "warning" | "danger";
+  style?: React.CSSProperties;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="kp-panel" data-variant={props.tone} style={props.style}>
+      <div className="kp-panelTitle" data-tone={props.tone}>
+        {props.title}
+      </div>
+      {props.children}
+    </div>
+  );
+}
+
+function DetailPair(props: { label: string; value: string }) {
+  return (
+    <div className="kp-row" style={{ marginTop: 8 }}>
+      <div className="kp-rowLabel">{props.label}</div>
+      <div className="kp-rowValue">{props.value}</div>
+    </div>
+  );
 }
 
 function shortAddr(addr: string) {

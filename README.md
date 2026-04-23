@@ -45,6 +45,8 @@ const modal = openKryptoPayModal({
   defaultMethod: "wallet",
   allowWallet: true,
   allowManual: true,
+  mismatchInfo:
+    "If the amount sent does not match the checkout amount, this payment will require manual review.",
   onSuccess: (event) => {
     console.log("paid", event.payment_intent_id, event.tx_hash);
   },
@@ -78,6 +80,7 @@ export function Checkout({ clientSecret }: { clientSecret: string }) {
         open={open}
         clientSecret={clientSecret}
         merchantName="Acme Store"
+        mismatchInfo="If the amount sent does not match the checkout amount, this payment will require manual review."
         onClose={(event) => {
           console.log("checkout closed", event.reason, event.payment_status);
           setOpen(false);
@@ -117,6 +120,7 @@ Common `options` fields:
 - `allowManual?: boolean`
 - `merchantName?: string`
 - `logoUrl?: string`
+- `mismatchInfo?: string`
 - `theme?: KryptoPayTheme`
 - `classNames?: KryptoPayClassNames`
 - `labels?: KryptoPayLabels`
@@ -151,7 +155,7 @@ The component is controlled by `open`; set `open` to `false` on `onClose` to kee
 - `checkout_state: string`
 - `completed: boolean`
 - `payment_intent_id?: string`
-- `payment_status?: "requires_payment" | "pending_confirmations" | "succeeded" | "expired"`
+- `payment_status?: "requires_payment" | "pending_confirmations" | "review_required" | "succeeded" | "expired"`
 - `tx_hash?: string`
 - `chain?: string`
 - `mode?: "testnet" | "mainnet"`
@@ -167,6 +171,7 @@ Closing the modal dismisses the SDK UI and stops polling. It does not cancel the
 
 - If the modal closes before payment is detected, the intent typically remains `requires_payment` until it is paid or expires.
 - If the modal closes after a transfer is submitted or while confirmations are pending, the backend may still move the intent to `pending_confirmations` and later `succeeded`.
+- If the backend detects a payment amount mismatch, the intent can move to `review_required`; the SDK shows that state and does not auto-close.
 - If the modal auto-closes after success, `onClose` is emitted with `reason: "success_auto_close"` and `completed: true`.
 
 If you need server-side cancellation, that should be implemented as a separate merchant/backend action rather than inferred from dismissing the modal.

@@ -360,7 +360,15 @@ function renderBody(
     code.textContent = state.intent.expected_wallet;
     body.appendChild(code);
 
-    body.appendChild(p("We’ll update automatically once payment is detected."));
+    body.appendChild(
+      renderPanel(
+        "Important",
+        "Send the exact amount shown above. Sending less or more can delay confirmation and may require manual review.",
+        "warning",
+      ),
+    );
+
+    body.appendChild(p("We'll update automatically once payment is detected."));
     return body;
   }
 
@@ -404,6 +412,54 @@ function renderBody(
     );
     body.appendChild(
       p(`Closing in ${successSecondsLeft ?? SUCCESS_AUTO_CLOSE_SECONDS}s...`),
+    );
+    return body;
+  }
+
+  if (state.type === "review_required") {
+    const title = document.createElement("div");
+    title.className = "kp-title kp-danger";
+    title.textContent = "Payment mismatch";
+    body.appendChild(title);
+
+    body.appendChild(
+      p(
+        `We detected a payment, but the amount sent was ${formatMismatchReason(
+          state.intent.mismatch_reason,
+        )}. This payment needs manual review.`,
+      ),
+    );
+
+    body.appendChild(
+      renderPanelRows(
+        "Mismatch details",
+        [
+          [
+            "Expected amount",
+            `${formatAmount(state.intent.amount_units, state.intent.decimals)} ${state.intent.token_symbol}`,
+          ],
+          [
+            "Amount sent",
+            typeof state.intent.paid_amount_units === "number"
+              ? `${formatAmount(state.intent.paid_amount_units, state.intent.decimals)} ${state.intent.token_symbol}`
+              : "Not available",
+          ],
+          ["Reason", formatMismatchLabel(state.intent.mismatch_reason)],
+        ],
+        "danger",
+      ),
+    );
+
+    if (state.intent.mismatch_tx_hash) {
+      body.appendChild(renderRow("Tx Hash", state.intent.mismatch_tx_hash));
+    }
+
+    if (opts.mismatchInfo) {
+      body.appendChild(renderPanel("Information", opts.mismatchInfo, "warning"));
+    }
+
+    body.appendChild(
+      p("Please contact the merchant to resolve this payment manually."),
     );
     return body;
   }
@@ -476,6 +532,7 @@ function renderFooter(
 
   if (
     state.type === "success" ||
+    state.type === "review_required" ||
     state.type === "expired" ||
     state.type === "error"
   ) {
@@ -494,9 +551,11 @@ function renderRow(left: string, right: string) {
   row.className = "kp-row";
 
   const l = document.createElement("div");
+  l.className = "kp-rowLabel";
   l.textContent = left;
 
   const r = document.createElement("div");
+  r.className = "kp-rowValue";
   r.textContent = right;
 
   row.appendChild(l);
@@ -547,6 +606,8 @@ function formatStatusLabel(status: string): string {
       return "Awaiting confirmations";
     case "succeeded":
       return "Succeeded";
+    case "review_required":
+      return "Review required";
     case "expired":
       return "Expired";
     default:
@@ -566,6 +627,64 @@ function formatAmount(amountUnits: number, decimals: number) {
   const whole = s.slice(0, -decimals);
   const frac = s.slice(-decimals).replace(/0+$/, "");
   return frac ? `${whole}.${frac}` : whole;
+}
+
+function formatMismatchReason(reason?: "underpaid" | "overpaid" | null) {
+  if (reason === "underpaid") return "lower than expected";
+  if (reason === "overpaid") return "higher than expected";
+  return "different from the expected amount";
+}
+
+function formatMismatchLabel(reason?: "underpaid" | "overpaid" | null) {
+  if (reason === "underpaid") return "Amount sent was lower than expected";
+  if (reason === "overpaid") return "Amount sent was higher than expected";
+  return "Amount sent did not match the expected amount";
+}
+
+function renderPanel(
+  title: string,
+  text: string,
+  variant: "warning" | "danger",
+) {
+  const panel = document.createElement("div");
+  panel.className = "kp-panel";
+  panel.dataset.variant = variant;
+
+  const heading = document.createElement("div");
+  heading.className = "kp-panelTitle";
+  heading.dataset.tone = variant;
+  heading.textContent = title;
+  panel.appendChild(heading);
+
+  const body = document.createElement("p");
+  body.className = "kp-muted";
+  body.style.margin = "0";
+  body.textContent = text;
+  panel.appendChild(body);
+
+  return panel;
+}
+
+function renderPanelRows(
+  title: string,
+  rows: Array<[string, string]>,
+  variant: "warning" | "danger",
+) {
+  const panel = document.createElement("div");
+  panel.className = "kp-panel";
+  panel.dataset.variant = variant;
+
+  const heading = document.createElement("div");
+  heading.className = "kp-panelTitle";
+  heading.dataset.tone = variant;
+  heading.textContent = title;
+  panel.appendChild(heading);
+
+  for (const [left, right] of rows) {
+    panel.appendChild(renderRow(left, right));
+  }
+
+  return panel;
 }
 
 function shortAddr(addr: string) {

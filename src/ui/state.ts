@@ -39,6 +39,7 @@ export type CheckoutState =
       intent: ResolvedPaymentIntent;
     }
   | { type: "success"; intent: ResolvedPaymentIntent }
+  | { type: "review_required"; intent: ResolvedPaymentIntent }
   | { type: "expired"; intent: ResolvedPaymentIntent }
   | {
       type: "error";

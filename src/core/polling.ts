@@ -70,8 +70,12 @@ export async function waitForFinalStatus(
       return { intent, timedOut: false, stopped: true };
     }
 
-    // Terminal states for MVP:
-    if (intent.status === "succeeded" || intent.status === "expired") {
+    // Terminal states for checkout polling:
+    if (
+      intent.status === "succeeded" ||
+      intent.status === "expired" ||
+      intent.status === "review_required"
+    ) {
       return { intent, timedOut: false, stopped: false };
     }
 
